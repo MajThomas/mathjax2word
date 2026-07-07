@@ -86,10 +86,12 @@ start_mini_window.bat
 
 **插入的公式编号可以选择后按F9进行更新。**
 
-普通编号的域代码：```text
+普通编号的域代码：
+```
 { SEQ LatexSvgEq \* ARABIC }
 ```
-章节编号的域代码：```text
+章节编号的域代码：
+```
 { STYLEREF 1 \s }.{ SEQ LatexSvgEq \* ARABIC \s 1 }
 ```
 
