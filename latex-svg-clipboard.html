@@ -178,6 +178,25 @@
       -webkit-app-region: no-drag;
     }
     #miniInsertInlineWord { background: var(--accent); }
+
+    #miniDrag {
+      width: 24px;
+      min-width: 24px;
+      padding: 0;
+      cursor: move;
+      user-select: none;
+      background: #e2e8f0;
+      color: #475569;
+      font-weight: 700;
+    }
+    #miniColor {
+      width: 76px;
+      min-width: 76px;
+      padding-left: 6px;
+      padding-right: 6px;
+      font-family: Consolas, Monaco, monospace;
+      text-align: center;
+    }
     #miniClose {
       background: #991b1b;
       padding-left: 10px;
@@ -188,6 +207,7 @@
 </head>
 <body>
   <div id="miniBar">
+    <button id="miniDrag" class="drag-handle" title="拖动窗口">⋮⋮</button>
     <input id="miniTex" type="text" spellcheck="false" title="输入 LaTeX 公式" />
     <button id="miniInsertInlineWord">插入行内</button>
     <button id="miniInsertDisplayWord" class="secondary">插入行间</button>
@@ -195,25 +215,23 @@
     <button id="miniInsertChapterNumberedWord" class="secondary">章节编号</button>
     <button id="miniReadWord" class="ghost">读取</button>
     <select id="miniFontSize" title="字号">
+      <option value="6">6 pt</option>
+      <option value="8">8 pt</option>
+      <option value="9">9 pt</option>
       <option value="10">10 pt</option>
       <option value="10.5">10.5 pt</option>
+      <option value="11">11 pt</option>
       <option value="12" selected>12 pt</option>
       <option value="14">14 pt</option>
+      <option value="15">15 pt</option>
       <option value="16">16 pt</option>
       <option value="18">18 pt</option>
-      <option value="20">20 pt</option>
       <option value="22">22 pt</option>
       <option value="24">24 pt</option>
-      <option value="26">26 pt</option>
-      <option value="28">28 pt</option>
-      <option value="32">32 pt</option>
-      <option value="36">36 pt</option>
-      <option value="42">42 pt</option>
-      <option value="48">48 pt</option>
     </select>
+    <input id="miniColor" type="text" value="#000000" title="公式颜色，例如 #000000" spellcheck="false" />
     <select id="miniMathFont" title="公式字体"></select>
     <button id="miniClose" title="关闭">关闭</button>
-    
   </div>
 
   <main>
@@ -238,8 +256,20 @@
         </select>
       </label>
       <label><input id="includeChapterNumber" type="checkbox" /> 编号含一级标题号</label>
-      <label>颜色 <input id="svgColor" type="color" value="#000000" /></label>
-      <label>字号 <input id="fontSize" type="number" value="12" min="6" max="96" step="0.5" /> pt</label>
+      <label>颜色 <input id="svgColor" type="text" value="#000000" spellcheck="false" placeholder="#000000" style="width:92px;font-family:Consolas,Monaco,monospace;" /></label>
+      <label>字号
+        <select id="fontSize">
+          <option value="6">6 pt</option>
+          <option value="8">8 pt</option>
+          <option value="10">10 pt</option>
+          <option value="10.5">10.5 pt</option>
+          <option value="11">11 pt</option>
+          <option value="12" selected>12 pt</option>
+          <option value="14">14 pt</option>
+          <option value="16">16 pt</option>
+          <option value="18">18 pt</option>
+        </select>
+      </label>
       <label>公式字体
         <select id="mathFont"></select>
       </label>
@@ -581,7 +611,10 @@
         mathFont: getSelectedFont(),
         mathFontLabel: getSelectedFontLabel(),
         includeChapterNumber: !!($("includeChapterNumber") && $("includeChapterNumber").checked),
-        svg: svgText
+        renderer: "mathjax-svg",
+        displayImageFormat: "emf",
+        platform: "word-routeB",
+        svgText: svgText
       };
     }
 
@@ -873,6 +906,17 @@
       }
     }
 
+    function normalizeHexColorInput(value) {
+      let text = String(value || "").trim();
+      if (!text) return null;
+      if (!text.startsWith("#")) text = "#" + text;
+      if (/^#[0-9a-fA-F]{3}$/.test(text)) {
+        text = "#" + text.slice(1).split("").map(ch => ch + ch).join("");
+      }
+      if (!/^#[0-9a-fA-F]{6}$/.test(text)) return null;
+      return text.toUpperCase();
+    }
+
     function handleFontChange() {
       const newFont = getSelectedFont();
       saveState();
@@ -896,8 +940,10 @@
       const miniTex = $("miniTex");
       const miniSize = $("miniFontSize");
       const miniFont = $("miniMathFont");
+      const miniColor = $("miniColor");
       if (miniTex) miniTex.value = $("tex").value;
       if (miniSize) miniSize.value = fmtNumber(sanitizeFontSize($("fontSize").value));
+      if (miniColor) miniColor.value = sanitizeColor($("svgColor").value || "#000000");
       if (miniFont) miniFont.value = getSelectedFont();
     }
 
@@ -905,8 +951,10 @@
       const miniTex = $("miniTex");
       const miniSize = $("miniFontSize");
       const miniFont = $("miniMathFont");
+      const miniColor = $("miniColor");
       if (miniTex) $("tex").value = miniTex.value;
       if (miniSize) $("fontSize").value = fmtNumber(sanitizeFontSize(miniSize.value));
+      if (miniColor) $("svgColor").value = sanitizeColor(miniColor.value || "#000000");
       if (miniFont && getAvailableFonts().some(f => f.id === miniFont.value)) $("mathFont").value = miniFont.value;
       saveState();
     }
@@ -915,8 +963,10 @@
       const miniTex = $("miniTex");
       const miniSize = $("miniFontSize");
       const miniFont = $("miniMathFont");
+      const miniColor = $("miniColor");
       if (miniTex) miniTex.value = $("tex").value;
       if (miniSize) miniSize.value = fmtNumber(sanitizeFontSize($("fontSize").value));
+      if (miniColor) miniColor.value = sanitizeColor($("svgColor").value || "#000000");
       if (miniFont) miniFont.value = getSelectedFont();
     }
 
@@ -949,6 +999,35 @@
       }
     }
 
+    function setupMiniDragHandle() {
+      const handle = $("miniDrag");
+      if (!handle) return;
+      let dragging = false;
+      let lastX = 0;
+      let lastY = 0;
+      handle.addEventListener("mousedown", (event) => {
+        dragging = true;
+        lastX = event.screenX;
+        lastY = event.screenY;
+        event.preventDefault();
+      });
+      window.addEventListener("mousemove", (event) => {
+        if (!dragging) return;
+        const dx = event.screenX - lastX;
+        const dy = event.screenY - lastY;
+        lastX = event.screenX;
+        lastY = event.screenY;
+        if (!dx && !dy) return;
+        try {
+          if (window.pywebview && window.pywebview.api && window.pywebview.api.drag_by) {
+            window.pywebview.api.drag_by(dx, dy);
+          }
+        } catch (_) {}
+      });
+      window.addEventListener("mouseup", () => { dragging = false; });
+      handle.addEventListener("dblclick", (event) => event.preventDefault());
+    }
+
     function closeMiniWindow() {
       try {
         if (window.pywebview && window.pywebview.api && window.pywebview.api.close) {
@@ -970,10 +1049,33 @@
     $("updateWord").addEventListener("click", updateWordFormula);
     $("tex").addEventListener("input", () => renderToSvgText().catch(() => {}));
     $("formulaMode").addEventListener("change", () => renderToSvgText().catch(() => {}));
-    $("svgColor").addEventListener("input", () => renderToSvgText().catch(() => {}));
+    $("svgColor").addEventListener("input", () => {
+      const color = normalizeHexColorInput($("svgColor").value);
+      if (!color) return;
+      $("svgColor").value = color;
+      renderToSvgText().then(syncMainToMini).catch(() => {});
+    });
+    $("svgColor").addEventListener("change", () => {
+      $("svgColor").value = sanitizeColor($("svgColor").value || "#000000");
+      renderToSvgText().then(syncMainToMini).catch(() => {});
+    });
     $("fontSize").addEventListener("input", () => renderToSvgText().catch(() => {}));
+    $("fontSize").addEventListener("change", () => renderToSvgText().catch(() => {}));
     $("mathFont").addEventListener("change", handleFontChange);
     $("includeChapterNumber").addEventListener("change", saveState);
+    $("miniColor").addEventListener("input", () => {
+      const color = normalizeHexColorInput($("miniColor").value);
+      if (!color) return;
+      $("miniColor").value = color;
+      syncMiniToMain();
+      renderToSvgText().catch(() => {});
+    });
+    $("miniColor").addEventListener("change", () => {
+      $("miniColor").value = sanitizeColor($("miniColor").value || "#000000");
+      syncMiniToMain();
+      renderToSvgText().then(syncMainToMini).catch(() => {});
+    });
+    setupMiniDragHandle();
     $("miniInsertInlineWord").addEventListener("click", () => miniInsertWordFormula("inline").catch(err => setStatus("迷你窗口插入行内公式失败：" + err.message, true)));
     $("miniInsertDisplayWord").addEventListener("click", () => miniInsertWordFormula("display").catch(err => setStatus("迷你窗口插入行间公式失败：" + err.message, true)));
     $("miniInsertNumberedWord").addEventListener("click", () => miniInsertNumberedWordFormula(false).catch(err => setStatus("迷你窗口插入编号公式失败：" + err.message, true)));

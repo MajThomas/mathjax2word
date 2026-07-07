@@ -50,7 +50,7 @@ def _word_app():
 
 def _save_formula_files(payload: dict[str, Any]) -> tuple[Path, Path, Path]:
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
-    svg = payload.get("svg")
+    svg = payload.get("svgText") or payload.get("svg")
     if not isinstance(svg, str) or "<svg" not in svg:
         raise WordFormulaError("前端没有传入有效 SVG，无法生成 EMF。")
     LAST_JSON.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -480,7 +480,8 @@ def read_selected_formula() -> dict[str, Any]:
     _, obj = _selected_object(selection)
     alt_text = _get_alt_text(obj)
     data = decode_payload(alt_text)
-    data.pop("svg", None)  # 前端会根据 LaTeX 重新渲染，避免传超大 SVG。
+    data.pop("svg", None)
+    data.pop("svgText", None)  # 前端会根据 LaTeX 重新渲染，避免传超大 SVG。
     return {
         "ok": True,
         "message": "已从 Word 选中公式读取源码和设置。",

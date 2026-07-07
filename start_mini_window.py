@@ -211,6 +211,37 @@ class MiniApi:
         # 关闭按钮只隐藏窗口，不结束后台。需要完全退出时，从托盘图标右键选择“退出后台”。
         return self.hide()
 
+    def drag_by(self, dx=0, dy=0):
+        """仅允许通过页面上的拖动句柄移动窗口，避免整个窗口任意位置可拖动。"""
+        try:
+            dx = int(float(dx))
+            dy = int(float(dy))
+        except Exception:
+            return False
+        if dx == 0 and dy == 0:
+            return True
+        # 优先使用 pywebview 的 move/x/y 能力。
+        try:
+            if self.window is not None and hasattr(self.window, "move"):
+                x = int(getattr(self.window, "x", 0) or 0)
+                y = int(getattr(self.window, "y", 0) or 0)
+                self.window.move(x + dx, y + dy)
+                return True
+        except Exception:
+            pass
+        # Windows 下回退到 Win32 移动当前前台窗口，不新增依赖。
+        if sys.platform.startswith("win"):
+            try:
+                import win32gui  # type: ignore
+                hwnd = win32gui.GetForegroundWindow()
+                if hwnd:
+                    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                    win32gui.MoveWindow(hwnd, left + dx, top + dy, right - left, bottom - top, True)
+                    return True
+            except Exception:
+                _log("拖动窗口失败：\n" + traceback.format_exc())
+        return False
+
 
 def _hide_window(window) -> bool:  # noqa: ANN001
     if window is None:
@@ -324,12 +355,12 @@ def main() -> int:
         background_color="#f8fafc",
     )
     try:
-        window = webview.create_window(easy_drag=True, **kwargs)
+        window = webview.create_window(easy_drag=False, **kwargs)
     except TypeError:
         # 兼容旧版本 pywebview：去掉不支持的参数。
         kwargs.pop("min_size", None)
         try:
-            window = webview.create_window(easy_drag=True, **kwargs)
+            window = webview.create_window(easy_drag=False, **kwargs)
         except TypeError:
             window = webview.create_window(**kwargs)
 
