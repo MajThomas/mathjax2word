@@ -1,0 +1,2 @@
+pywin32; platform_system == "Windows"
+pywebview; platform_system == "Windows"

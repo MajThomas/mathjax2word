@@ -1,0 +1,1011 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LaTeX → SVG/EMF → Word，本地版</title>
+
+  <!--
+    local-fonts.js 由 run_local_server.py 动态生成；如果直接用普通静态服务器，
+    同目录下也提供了静态 fallback 文件。它会把本地可用的 MathJax 公式字体写入
+    window.LATEX_SVG_FONTS。
+  -->
+  <script src="./local-fonts.js"></script>
+
+  <script>
+    (function () {
+      const availableFonts = Array.isArray(window.LATEX_SVG_FONTS) && window.LATEX_SVG_FONTS.length
+        ? window.LATEX_SVG_FONTS
+        : [{ id: "mathjax-newcm", label: "MathJax New Computer Modern", builtin: true }];
+
+      function getInitialFont() {
+        const params = new URLSearchParams(location.search || "");
+        const fromQuery = params.get("mathFont") || params.get("font");
+        const fromStorage = localStorage.getItem("latexSvgMathFont");
+        const candidate = fromQuery || fromStorage || availableFonts[0].id;
+        return availableFonts.some(f => f.id === candidate) ? candidate : availableFonts[0].id;
+      }
+
+      const selectedFont = getInitialFont();
+      const paths = {};
+      for (const font of availableFonts) {
+        if (font.path && !font.builtin) paths[font.id] = font.path;
+      }
+
+      window.LATEX_SVG_SELECTED_FONT = selectedFont;
+
+      window.MathJax = {
+        startup: { typeset: false },
+        tex: {
+          packages: { "[+]": ["ams", "noerrors", "noundefined"] },
+          inlineMath: [["$", "$"], ["\\(", "\\)"]],
+          displayMath: [["$$", "$$"], ["\\[", "\\]"]],
+          processEscapes: true
+        },
+        loader: {
+          paths,
+          load: ["[tex]/ams", "[tex]/noerrors", "[tex]/noundefined"]
+        },
+        svg: {
+          font: selectedFont,
+          fontCache: "local"
+        }
+      };
+    })();
+  </script>
+  <script defer src="./vendor/mathjax/tex-svg.js"></script>
+
+  <style>
+    :root {
+      --text: #1f2937;
+      --muted: #6b7280;
+      --border: #d1d5db;
+      --bg: #ffffff;
+      --panel: #f9fafb;
+      --accent: #2563eb;
+      --accent-weak: #eff6ff;
+      --danger: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      line-height: 1.5;
+    }
+    main { max-width: 1040px; margin: 0 auto; }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    .hint { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+    textarea {
+      width: 100%; min-height: 150px; resize: vertical; padding: 12px;
+      border: 1px solid var(--border); border-radius: 8px;
+      font-size: 16px; font-family: Consolas, "Courier New", monospace; line-height: 1.5;
+      outline: none;
+    }
+    textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+    .row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin: 12px 0 0; }
+    button { border: 0; border-radius: 7px; padding: 9px 14px; background: var(--accent); color: white; font-size: 14px; cursor: pointer; }
+    button.secondary { background: #374151; }
+    button.ghost { background: #e5e7eb; color: #111827; }
+    label { font-size: 14px; color: #374151; user-select: none; }
+    input[type="color"] { vertical-align: middle; width: 34px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: white; }
+    input[type="number"] { width: 72px; height: 30px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px; font-size: 14px; }
+    select { min-width: 150px; height: 30px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 5px; background: white; font-size: 14px; }
+    #status { min-height: 24px; margin-top: 12px; font-size: 14px; color: #111827; }
+    #status.error { color: var(--danger); }
+    #pasteBox {
+      margin-top: 14px;
+      border: 1px dashed #9ca3af;
+      border-radius: 10px;
+      background: var(--accent-weak);
+      padding: 12px 14px;
+      color: #1f2937;
+      font-size: 14px;
+    }
+    #pasteBox strong { color: #111827; }
+    #pasteBox.dragover { border-color: var(--accent); background: #dbeafe; }
+    #previewWrap { margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: auto; }
+    #previewTitle { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+    #preview { min-height: 110px; padding: 22px; background: white; color: #000000; }
+    #preview svg { color: #000000; fill: #000000; }
+    .small { color: var(--muted); font-size: 13px; }
+    code { background: #eef2ff; border-radius: 4px; padding: 1px 4px; }
+
+    /* 迷你置顶窗口模式：由 start_mini_window.py 打开 ?mini=1 */
+    #miniBar { display: none; }
+    html.mini, body.mini {
+      width: 100%;
+      height: 40px !important;
+      max-height: 40px !important;
+      min-height: 40px !important;
+      margin: 0;
+      padding: 0;
+      overflow: hidden !important;
+      background: #f3f4f6;
+      line-height: 1.2;
+      box-sizing: border-box;
+    }
+    body.mini main { display: none; }
+    body.mini #miniBar {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      height: 40px;
+      max-height: 40px;
+      width: 100vw;
+      box-sizing: border-box;
+      padding: 6px 7px 3px; /* 上方约为按钮高度20%，下方约为10% */
+      border: 1px solid #c7ccd1;
+      background: #f8fafc;
+      -webkit-app-region: drag;
+    }
+    #miniTex {
+      flex: 1 1 auto;
+      min-width: 220px;
+      height: 30px;
+      box-sizing: border-box;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 15px;
+      font-family: Consolas, "Courier New", monospace;
+      outline: none;
+      -webkit-app-region: no-drag;
+    }
+    #miniTex:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(37,99,235,.10); }
+    #miniFontSize, #miniMathFont {
+      height: 30px;
+      box-sizing: border-box;
+      font-size: 13px;
+      -webkit-app-region: no-drag;
+    }
+    #miniFontSize {
+      min-width: 82px;
+      width: 82px;
+    }
+    #miniMathFont {
+      min-width: 170px;
+      width: 170px;
+    }
+    #miniBar button {
+      height: 30px;
+      box-sizing: border-box;
+      white-space: nowrap;
+      padding: 4px 8px;
+      font-size: 13px;
+      -webkit-app-region: no-drag;
+    }
+    #miniInsertInlineWord { background: var(--accent); }
+    #miniClose {
+      background: #991b1b;
+      padding-left: 10px;
+      padding-right: 10px;
+    }
+
+  </style>
+</head>
+<body>
+  <div id="miniBar">
+    <input id="miniTex" type="text" spellcheck="false" title="输入 LaTeX 公式" />
+    <button id="miniInsertInlineWord">插入行内</button>
+    <button id="miniInsertDisplayWord" class="secondary">插入行间</button>
+    <button id="miniInsertNumberedWord" class="secondary">插入编号</button>
+    <button id="miniInsertChapterNumberedWord" class="secondary">章节编号</button>
+    <button id="miniReadWord" class="ghost">读取</button>
+    <select id="miniFontSize" title="字号">
+      <option value="10">10 pt</option>
+      <option value="10.5">10.5 pt</option>
+      <option value="12" selected>12 pt</option>
+      <option value="14">14 pt</option>
+      <option value="16">16 pt</option>
+      <option value="18">18 pt</option>
+      <option value="20">20 pt</option>
+      <option value="22">22 pt</option>
+      <option value="24">24 pt</option>
+      <option value="26">26 pt</option>
+      <option value="28">28 pt</option>
+      <option value="32">32 pt</option>
+      <option value="36">36 pt</option>
+      <option value="42">42 pt</option>
+      <option value="48">48 pt</option>
+    </select>
+    <select id="miniMathFont" title="公式字体"></select>
+    <button id="miniClose" title="关闭">关闭</button>
+    
+  </div>
+
+  <main>
+    <h1>LaTeX → SVG/EMF → Word，本地版</h1>
+    <p class="hint">复制/下载的 SVG 会在 <code>&lt;metadata&gt;&lt;latex-source&gt;...&lt;/latex-source&gt;&lt;/metadata&gt;</code> 中写入 LaTeX 源码。增强功能可把公式转换为 EMF 插入 Word，并把 LaTeX 源码和配置写入图片隐藏数据，后续可选中该公式回读并更新。</p>
+
+    <textarea id="tex" spellcheck="false">\frac{\partial u}{\partial t}=\alpha \nabla^2 u+f(x,t)</textarea>
+
+    <div class="row">
+      <button id="copySvg">渲染并复制 SVG 图片</button>
+      <button class="secondary" id="copySource">复制 SVG 源码</button>
+      <button class="ghost" id="downloadSvg">下载 SVG 文件</button>
+      <button id="insertWord">插入 Word 可编辑公式</button>
+      <button id="insertDisplayWord" class="secondary">插入 Word 行间公式</button>
+      <button id="insertNumberedWord">插入 Word 编号公式</button>
+      <button class="secondary" id="readWord">读取 Word 选中公式</button>
+      <button class="secondary" id="updateWord">更新 Word 选中公式</button>
+      <label>公式模式
+        <select id="formulaMode">
+          <option value="inline">行内公式</option>
+          <option value="display" selected>行间公式</option>
+        </select>
+      </label>
+      <label><input id="includeChapterNumber" type="checkbox" /> 编号含一级标题号</label>
+      <label>颜色 <input id="svgColor" type="color" value="#000000" /></label>
+      <label>字号 <input id="fontSize" type="number" value="12" min="6" max="96" step="0.5" /> pt</label>
+      <label>公式字体
+        <select id="mathFont"></select>
+      </label>
+    </div>
+
+    <div id="pasteBox" tabindex="0">
+      <strong>两种回读方式：</strong>① 对旧版 SVG 公式，可在 Word 中复制后回到这里按 <code>Ctrl+V</code>；② 对新版 EMF 可编辑公式，请在 Word 中选中公式图片后点击“读取 Word 选中公式”。也可以把 <code>.svg</code> 文件拖到这里。
+    </div>
+
+    <div id="status">等待输入。</div>
+
+    <div id="previewWrap">
+      <div id="previewTitle">预览</div>
+      <div id="preview"></div>
+    </div>
+
+    <p class="small">说明：建议通过 <code>start_server.bat</code> 或 <code>python run_local_server.py</code> 启动后访问 <code>http://localhost:8000/latex-svg-clipboard.html</code>。Word 增强功能需要 Windows + Microsoft Word 桌面版 + <code>pywin32</code> + Inkscape；不要直接双击 HTML 文件。</p>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    const STORAGE_KEYS = {
+      tex: "latexSvgTex",
+      color: "latexSvgColor",
+      fontSize: "latexSvgFontSize",
+      mode: "latexSvgFormulaMode",
+      mathFont: "latexSvgMathFont",
+      includeChapterNumber: "latexSvgIncludeChapterNumber",
+      fontSizeDefault12Migrated: "latexSvgFontSizeDefault12Migrated"
+    };
+
+    function setStatus(text, isError = false) {
+      const el = $("status");
+      el.textContent = text;
+      el.classList.toggle("error", !!isError);
+    }
+
+    function stripMathDelimiters(raw) {
+      let tex = raw.trim();
+      if (tex.startsWith("$$") && tex.endsWith("$$") && tex.length >= 4) return tex.slice(2, -2).trim();
+      if (tex.startsWith("\\[") && tex.endsWith("\\]") && tex.length >= 4) return tex.slice(2, -2).trim();
+      if (tex.startsWith("\\(") && tex.endsWith("\\)") && tex.length >= 4) return tex.slice(2, -2).trim();
+      if (tex.startsWith("$") && tex.endsWith("$") && tex.length >= 2) return tex.slice(1, -1).trim();
+      return tex;
+    }
+
+    function isWrappedByOneOuterBrace(tex) {
+      const text = String(tex || "").trim();
+      if (!text.startsWith("{") || !text.endsWith("}")) return false;
+
+      let depth = 0;
+      let escaped = false;
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === "{") depth += 1;
+        if (ch === "}") depth -= 1;
+
+        if (depth < 0) return false;
+        if (depth === 0 && i < text.length - 1) return false;
+      }
+      return depth === 0;
+    }
+
+    function makeTexForMathJax(tex, mode) {
+      const clean = String(tex || "").trim();
+      if (mode !== "inline") return clean;
+      if (!clean) return clean;
+
+      // 行内公式在送入 MathJax 解析时整体加一层分组，避免 +、-、= 等符号
+      // 被外层解析逻辑截断。这里不修改输入框内容，也不写入 metadata/Word 隐藏数据。
+      if (isWrappedByOneOuterBrace(clean)) return clean;
+      return "{" + clean + "}";
+    }
+
+    function sanitizeColor(value) {
+      if (/^#[0-9a-fA-F]{6}$/.test(value)) return value.toUpperCase();
+      return "#000000";
+    }
+
+    function sanitizeFontSize(value) {
+      const n = Number.parseFloat(value);
+      if (!Number.isFinite(n)) return 12;
+      return Math.min(96, Math.max(6, n));
+    }
+
+    function fmtNumber(value) {
+      const rounded = Math.round(value * 1000) / 1000;
+      return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/0+$/, "").replace(/\.$/, "");
+    }
+
+    function cdata(text) {
+      return "<![CDATA[" + String(text).replace(/\]\]>/g, "]]]]><![CDATA[>") + "]]>";
+    }
+
+    function htmlEscape(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function decodeBasicEntities(value) {
+      const text = document.createElement("textarea");
+      text.innerHTML = value;
+      return text.value;
+    }
+
+    function getAvailableFonts() {
+      return Array.isArray(window.LATEX_SVG_FONTS) && window.LATEX_SVG_FONTS.length
+        ? window.LATEX_SVG_FONTS
+        : [{ id: "mathjax-newcm", label: "MathJax New Computer Modern", builtin: true }];
+    }
+
+    function getSelectedFont() {
+      const fonts = getAvailableFonts();
+      const selected = $("mathFont").value || window.LATEX_SVG_SELECTED_FONT || fonts[0].id;
+      return fonts.some(f => f.id === selected) ? selected : fonts[0].id;
+    }
+
+    function getSelectedFontLabel() {
+      const id = getSelectedFont();
+      const font = getAvailableFonts().find(f => f.id === id);
+      return font ? font.label : id;
+    }
+
+    function fillFontSelect(select, fonts, selected) {
+      if (!select) return;
+      select.replaceChildren();
+      for (const font of fonts) {
+        const option = document.createElement("option");
+        option.value = font.id;
+        option.textContent = font.label || font.id;
+        if (font.id === selected) option.selected = true;
+        select.appendChild(option);
+      }
+    }
+
+    function populateFonts() {
+      const fonts = getAvailableFonts();
+      const selected = window.LATEX_SVG_SELECTED_FONT || localStorage.getItem(STORAGE_KEYS.mathFont) || fonts[0].id;
+      fillFontSelect($("mathFont"), fonts, selected);
+      fillFontSelect($("miniMathFont"), fonts, selected);
+    }
+
+    function saveState() {
+      localStorage.setItem(STORAGE_KEYS.tex, $("tex").value);
+      localStorage.setItem(STORAGE_KEYS.color, $("svgColor").value);
+      localStorage.setItem(STORAGE_KEYS.fontSize, $("fontSize").value);
+      localStorage.setItem(STORAGE_KEYS.mode, $("formulaMode").value);
+      localStorage.setItem(STORAGE_KEYS.mathFont, getSelectedFont());
+      if ($("includeChapterNumber")) localStorage.setItem(STORAGE_KEYS.includeChapterNumber, $("includeChapterNumber").checked ? "1" : "0");
+    }
+
+    function restoreState() {
+      const params = new URLSearchParams(location.search || "");
+      const texFromUrl = params.get("latex");
+      const colorFromUrl = params.get("color");
+      const modeFromUrl = params.get("mode") || params.get("display");
+      const fontSizeFromUrl = params.get("fontSize") || params.get("font-size");
+      const chapterFromUrl = params.get("chapter") || params.get("includeChapterNumber");
+
+      const tex = texFromUrl ?? localStorage.getItem(STORAGE_KEYS.tex);
+      const color = colorFromUrl ?? localStorage.getItem(STORAGE_KEYS.color);
+      let fontSize = fontSizeFromUrl ?? localStorage.getItem(STORAGE_KEYS.fontSize);
+      if (fontSizeFromUrl === null && localStorage.getItem(STORAGE_KEYS.fontSizeDefault12Migrated) !== "1") {
+        fontSize = "12";
+        localStorage.setItem(STORAGE_KEYS.fontSize, "12");
+        localStorage.setItem(STORAGE_KEYS.fontSizeDefault12Migrated, "1");
+      }
+      const mode = modeFromUrl ?? localStorage.getItem(STORAGE_KEYS.mode);
+      const includeChapterNumber = chapterFromUrl ?? localStorage.getItem(STORAGE_KEYS.includeChapterNumber);
+
+      if (tex !== null) $("tex").value = tex;
+      if (color && /^#[0-9a-fA-F]{6}$/.test(color)) $("svgColor").value = color;
+      if (fontSize !== null) $("fontSize").value = fmtNumber(sanitizeFontSize(fontSize));
+      if (mode !== null) {
+        $("formulaMode").value = /^(1|true|yes|display)$/i.test(mode) ? "display" : "inline";
+      }
+      if (includeChapterNumber !== null && $("includeChapterNumber")) {
+        $("includeChapterNumber").checked = /^(1|true|yes|on)$/i.test(includeChapterNumber);
+      }
+    }
+
+    function makeLatexMetadata(rawLatex, mode, color, fontSize, mathFont) {
+      const created = new Date().toISOString();
+      const display = mode === "display";
+      return [
+        "<metadata>",
+        "<latex-source version=\"1\" display=\"" + (display ? "true" : "false") + "\" mode=\"" + mode + "\" color=\"" + color + "\" font-size=\"" + fmtNumber(fontSize) + "\" math-font=\"" + mathFont + "\">",
+        cdata(rawLatex),
+        "</latex-source>",
+        "<latex-tool>latex-svg-clipboard-local-webpaste</latex-tool>",
+        "<latex-created>" + created + "</latex-created>",
+        "</metadata>"
+      ].join("");
+    }
+
+    function insertMetadataIntoSvg(svgText, metadataText) {
+      svgText = svgText.replace(/<metadata>[\s\S]*?<\/metadata>/i, "");
+      return svgText.replace(/(<svg\b[^>]*>)/i, "$1" + metadataText);
+    }
+
+    function applyVisualSettingsToSvg(svg, color, fontSize, mode, mathFont) {
+      svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      svg.setAttribute("version", "1.1");
+      svg.setAttribute("color", color);
+      svg.setAttribute("fill", color);
+      svg.setAttribute("font-size", fmtNumber(fontSize) + "pt");
+      svg.setAttribute("data-font-size-pt", fmtNumber(fontSize));
+      svg.setAttribute("data-formula-mode", mode);
+      svg.setAttribute("data-math-font", mathFont);
+      svg.setAttribute("data-math-font-label", getSelectedFontLabel());
+
+      const oldStyle = svg.getAttribute("style") || "";
+      svg.setAttribute("style", `${oldStyle}; color:${color}; fill:${color}; font-size:${fmtNumber(fontSize)}pt;`);
+
+      const viewBox = svg.getAttribute("viewBox");
+      if (viewBox) {
+        const parts = viewBox.trim().split(/[\s,]+/).map(Number);
+        if (parts.length === 4 && parts.every(Number.isFinite) && parts[2] > 0 && parts[3] > 0) {
+          svg.setAttribute("width", fmtNumber(parts[2] / 1000 * fontSize) + "pt");
+          svg.setAttribute("height", fmtNumber(parts[3] / 1000 * fontSize) + "pt");
+        }
+      }
+    }
+
+    async function renderToSvgText() {
+      await MathJax.startup.promise;
+
+      const raw = $("tex").value;
+      const tex = stripMathDelimiters(raw);
+      const color = sanitizeColor($("svgColor").value);
+      const fontSize = sanitizeFontSize($("fontSize").value);
+      const mode = $("formulaMode").value === "display" ? "display" : "inline";
+      const mathFont = getSelectedFont();
+
+      $("fontSize").value = fmtNumber(fontSize);
+      $("svgColor").value = color;
+
+      if (!tex) throw new Error("请输入 LaTeX 公式。");
+
+      saveState();
+
+      const texForMathJax = makeTexForMathJax(tex, mode);
+      const node = await MathJax.tex2svgPromise(texForMathJax, { display: mode === "display" });
+      const svg = node.querySelector("svg").cloneNode(true);
+
+      applyVisualSettingsToSvg(svg, color, fontSize, mode, mathFont);
+
+      const preview = $("preview");
+      preview.style.color = color;
+      preview.replaceChildren(svg.cloneNode(true));
+
+      let svgText = new XMLSerializer().serializeToString(svg);
+      svgText = svgText.replace(/currentColor/g, color);
+
+      if (!svgText.startsWith("<svg")) {
+        svgText = svgText.replace(/^.*?(<svg)/s, "$1");
+      }
+
+      const metadata = makeLatexMetadata(raw, mode, color, fontSize, mathFont);
+      svgText = insertMetadataIntoSvg(svgText, metadata);
+      return svgText;
+    }
+
+    async function copySvgImage() {
+      try {
+        const svgText = await renderToSvgText();
+        const svgBlob = new Blob([svgText], { type: "image/svg+xml" });
+        const textBlob = new Blob([svgText], { type: "text/plain" });
+
+        if (window.ClipboardItem && ClipboardItem.supports && ClipboardItem.supports("image/svg+xml")) {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              "image/svg+xml": svgBlob,
+              "text/plain": textBlob
+            })
+          ]);
+          setStatus("已复制 SVG 图片到剪贴板；SVG 内已写入 latex-source 标签。");
+        } else {
+          await navigator.clipboard.writeText(svgText);
+          setStatus("当前浏览器不支持 image/svg+xml 剪贴板写入，已改为复制 SVG 源码。");
+        }
+      } catch (err) {
+        setStatus("复制失败：" + err.message, true);
+      }
+    }
+
+    async function copySvgSource() {
+      try {
+        const svgText = await renderToSvgText();
+        await navigator.clipboard.writeText(svgText);
+        setStatus("已复制 SVG 源码，源码中包含 latex-source 标签。");
+      } catch (err) {
+        setStatus("复制源码失败：" + err.message, true);
+      }
+    }
+
+    async function downloadSvg() {
+      try {
+        const svgText = await renderToSvgText();
+        const blob = new Blob([svgText], { type: "image/svg+xml" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "latex-formula.svg";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setStatus("已生成 SVG 文件，文件中包含 latex-source 标签。");
+      } catch (err) {
+        setStatus("下载失败：" + err.message, true);
+      }
+    }
+
+
+
+    function currentFormulaPayload(svgText) {
+      const mode = $("formulaMode").value === "display" ? "display" : "inline";
+      return {
+        type: "latex-svg-formula",
+        version: 1,
+        latex: $("tex").value,
+        mode,
+        display: mode === "display",
+        color: sanitizeColor($("svgColor").value),
+        fontSize: sanitizeFontSize($("fontSize").value),
+        mathFont: getSelectedFont(),
+        mathFontLabel: getSelectedFontLabel(),
+        includeChapterNumber: !!($("includeChapterNumber") && $("includeChapterNumber").checked),
+        svg: svgText
+      };
+    }
+
+    async function apiPost(path, payload = {}) {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify(payload)
+      });
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (_) {
+        data = { ok: false, error: await response.text() };
+      }
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || data.message || ("请求失败：" + response.status));
+      }
+      return data;
+    }
+
+    async function insertWordFormula() {
+      try {
+        setStatus("正在生成 SVG 并插入 Word……");
+        const svgText = await renderToSvgText();
+        const data = await apiPost("/api/insert-word", currentFormulaPayload(svgText));
+        setStatus(data.message || "已插入 Word。EMF 用于显示，公式数据已隐藏保存。 ");
+      } catch (err) {
+        setStatus("插入 Word 失败：" + err.message, true);
+      }
+    }
+
+    async function insertWordFormulaAsMode(mode) {
+      const oldMode = $("formulaMode").value;
+      try {
+        $("formulaMode").value = mode === "display" ? "display" : "inline";
+        await insertWordFormula();
+      } finally {
+        $("formulaMode").value = oldMode;
+        saveState();
+      }
+    }
+
+    async function insertNumberedWordFormula(options = {}) {
+      const oldMode = $("formulaMode").value;
+      const includeChapterOverride = Object.prototype.hasOwnProperty.call(options, "includeChapterNumber")
+        ? !!options.includeChapterNumber
+        : null;
+      try {
+        setStatus(includeChapterOverride ? "正在生成 SVG 并插入 Word 章节编号公式……" : "正在生成 SVG 并插入 Word 编号公式……");
+        $("formulaMode").value = "display";
+        const svgText = await renderToSvgText();
+        const payload = currentFormulaPayload(svgText);
+        payload.mode = "display";
+        payload.display = true;
+        if (includeChapterOverride !== null) {
+          payload.includeChapterNumber = includeChapterOverride;
+        }
+        const data = await apiPost("/api/insert-numbered-word", payload);
+        setStatus(data.message || "已插入 Word 编号公式。 ");
+      } catch (err) {
+        setStatus("插入 Word 编号公式失败：" + err.message, true);
+      } finally {
+        $("formulaMode").value = oldMode;
+        saveState();
+      }
+    }
+
+    async function readWordFormula() {
+      try {
+        setStatus("正在读取 Word 当前选中的公式……");
+        const data = await apiPost("/api/read-word", {});
+        applyImportedLatex(data.formula);
+        setStatus(data.message || "已从 Word 选中公式读取源码和设置。 ");
+      } catch (err) {
+        setStatus("读取 Word 公式失败：" + err.message, true);
+      }
+    }
+
+    async function updateWordFormula() {
+      try {
+        setStatus("正在重新生成 EMF 并更新 Word 选中公式……");
+        const svgText = await renderToSvgText();
+        const data = await apiPost("/api/update-word", currentFormulaPayload(svgText));
+        setStatus(data.message || "已更新 Word 选中公式。 ");
+      } catch (err) {
+        setStatus("更新 Word 公式失败：" + err.message, true);
+      }
+    }
+
+    async function checkWordEnvironment() {
+      try {
+        const response = await fetch("/api/check-environment", { cache: "no-store" });
+        const data = await response.json();
+        if (!data.windows) return "当前非 Windows 环境，Word 增强功能不可用。";
+        const missing = [];
+        if (!data.pywin32) missing.push("pywin32");
+        if (!data.inkscape) missing.push("Inkscape");
+        if (missing.length) return "Word 增强功能未就绪，缺少：" + missing.join("、") + "。";
+        if (!data.wordRunning) return "Word 增强功能环境已就绪；请打开 Word 文档后使用插入/读取/更新。";
+        return "Word 增强功能环境已就绪，已检测到正在运行的 Word。";
+      } catch (_) {
+        return "Word 增强功能状态暂未检测。";
+      }
+    }
+
+    function readAttributesFromNode(node) {
+      const get = (name) => node.getAttribute(name);
+      let mode = get("mode") || null;
+      if (!mode && get("display") !== null) mode = /^(1|true|yes)$/i.test(get("display")) ? "display" : "inline";
+      return {
+        latex: node.textContent || "",
+        color: get("color"),
+        fontSize: get("font-size") || get("fontSize"),
+        mode,
+        mathFont: get("math-font") || get("mathFont")
+      };
+    }
+
+    function parseAttributes(attrText) {
+      const attrs = {};
+      const re = /([\w:-]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
+      let m;
+      while ((m = re.exec(attrText || ""))) attrs[m[1]] = m[3] ?? m[4] ?? "";
+      return attrs;
+    }
+
+    function extractLatexFromSvgText(text) {
+      if (!text || typeof text !== "string") return null;
+      const variants = [text, decodeBasicEntities(text)];
+
+      for (const value of variants) {
+        try {
+          const xml = new DOMParser().parseFromString(value, "image/svg+xml");
+          const node = xml.querySelector("latex-source");
+          if (node) return readAttributesFromNode(node);
+        } catch (_) {}
+
+        try {
+          const html = new DOMParser().parseFromString(value, "text/html");
+          const node = html.querySelector("latex-source");
+          if (node) return readAttributesFromNode(node);
+        } catch (_) {}
+
+        const match = value.match(/<latex-source\b([^>]*)>([\s\S]*?)<\/latex-source>/i);
+        if (match) {
+          const attrs = parseAttributes(match[1]);
+          let content = match[2]
+            .replace(/^\s*<!\[CDATA\[/, "")
+            .replace(/\]\]>\s*$/, "");
+          content = decodeBasicEntities(content);
+          const mode = attrs.mode || (/^(1|true|yes)$/i.test(attrs.display || "") ? "display" : "inline");
+          return {
+            latex: content,
+            color: attrs.color,
+            fontSize: attrs["font-size"] || attrs.fontSize,
+            mode,
+            mathFont: attrs["math-font"] || attrs.mathFont
+          };
+        }
+
+        const dataAttr = value.match(/data-latex-source\s*=\s*("([^"]*)"|'([^']*)')/i);
+        if (dataAttr) {
+          try {
+            return { latex: decodeURIComponent(dataAttr[2] ?? dataAttr[3] ?? "") };
+          } catch (_) {
+            return { latex: dataAttr[2] ?? dataAttr[3] ?? "" };
+          }
+        }
+      }
+      return null;
+    }
+
+    function extractDataSvgFromHtml(html) {
+      const out = [];
+      if (!html) return out;
+      const decodedHtml = decodeBasicEntities(html);
+      const dataUrlRe = /data:image\/svg\+xml(?:;charset=[^;,"']+)?(;base64)?,([^"'\s>]+)/ig;
+      let m;
+      while ((m = dataUrlRe.exec(decodedHtml))) {
+        const isBase64 = !!m[1];
+        let payload = m[2];
+        try {
+          if (isBase64) {
+            out.push(new TextDecoder("utf-8").decode(Uint8Array.from(atob(payload), c => c.charCodeAt(0))));
+          } else {
+            out.push(decodeURIComponent(payload));
+          }
+        } catch (_) {}
+      }
+      return out;
+    }
+
+    async function fileToText(file) {
+      return await file.text();
+    }
+
+    async function extractLatexFromClipboardData(data) {
+      if (!data) return null;
+
+      const textTypes = ["image/svg+xml", "text/plain", "text/html"];
+      for (const type of textTypes) {
+        try {
+          const value = data.getData(type);
+          const parsed = extractLatexFromSvgText(value);
+          if (parsed) return parsed;
+          if (type === "text/html") {
+            for (const svgText of extractDataSvgFromHtml(value)) {
+              const parsedData = extractLatexFromSvgText(svgText);
+              if (parsedData) return parsedData;
+            }
+          }
+        } catch (_) {}
+      }
+
+      const items = Array.from(data.items || []);
+      for (const item of items) {
+        if (item.kind === "file" && (item.type === "image/svg+xml" || item.type.includes("svg"))) {
+          const file = item.getAsFile();
+          if (!file) continue;
+          const parsed = extractLatexFromSvgText(await fileToText(file));
+          if (parsed) return parsed;
+        }
+      }
+      return null;
+    }
+
+    function applyImportedLatex(data) {
+      if (!data || !data.latex) throw new Error("没有在 SVG 中找到 latex-source。可能是 Word 已把 SVG 转成了 PNG/EMF，或粘贴内容丢失了 metadata。");
+
+      $("tex").value = data.latex;
+      if (data.color && /^#[0-9a-fA-F]{6}$/.test(data.color)) $("svgColor").value = data.color;
+      if (data.fontSize !== undefined && data.fontSize !== null) $("fontSize").value = fmtNumber(sanitizeFontSize(data.fontSize));
+      if (data.mode) $("formulaMode").value = data.mode === "display" || /^(1|true|yes)$/i.test(data.mode) ? "display" : "inline";
+      if (data.includeChapterNumber !== undefined && $("includeChapterNumber")) $("includeChapterNumber").checked = !!data.includeChapterNumber;
+      if (data.mathFont && getAvailableFonts().some(f => f.id === data.mathFont)) {
+        $("mathFont").value = data.mathFont;
+        if (data.mathFont !== window.LATEX_SVG_SELECTED_FONT) {
+          localStorage.setItem(STORAGE_KEYS.mathFont, data.mathFont);
+          saveState();
+          setStatus("已读取公式源码，正在切换对应公式字体并重新加载页面……");
+          setTimeout(() => location.reload(), 120);
+          return;
+        }
+      }
+      saveState();
+      renderToSvgText()
+        .then(() => setStatus("已从粘贴的 SVG 中读取 LaTeX 源码，可继续编辑。"))
+        .catch(err => setStatus("已读取源码，但重新渲染失败：" + err.message, true));
+    }
+
+    function clipboardLooksLikeSvg(data) {
+      if (!data) return false;
+      const types = Array.from(data.types || []);
+      if (types.includes("image/svg+xml")) return true;
+      const plain = data.getData("text/plain") || "";
+      const html = data.getData("text/html") || "";
+      if (plain.includes("latex-source") || plain.includes("<svg")) return true;
+      if (html.includes("latex-source") || html.includes("image/svg+xml") || html.includes("<svg")) return true;
+      return Array.from(data.items || []).some(item => item.kind === "file" && (item.type === "image/svg+xml" || item.type.includes("svg")));
+    }
+
+    async function handlePaste(event) {
+      const data = event.clipboardData;
+      if (!clipboardLooksLikeSvg(data)) return;
+      event.preventDefault();
+      try {
+        const extracted = await extractLatexFromClipboardData(data);
+        applyImportedLatex(extracted);
+      } catch (err) {
+        setStatus("粘贴读取失败：" + err.message, true);
+      }
+    }
+
+    async function handleDrop(event) {
+      event.preventDefault();
+      $("pasteBox").classList.remove("dragover");
+      const files = Array.from(event.dataTransfer?.files || []);
+      const svgFile = files.find(file => file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg"));
+      if (!svgFile) {
+        setStatus("未检测到 SVG 文件。", true);
+        return;
+      }
+      try {
+        const extracted = extractLatexFromSvgText(await fileToText(svgFile));
+        applyImportedLatex(extracted);
+      } catch (err) {
+        setStatus("读取 SVG 文件失败：" + err.message, true);
+      }
+    }
+
+    function handleFontChange() {
+      const newFont = getSelectedFont();
+      saveState();
+      if (newFont !== window.LATEX_SVG_SELECTED_FONT) {
+        setStatus("正在切换公式字体并重新加载页面……");
+        setTimeout(() => location.reload(), 120);
+      } else {
+        renderToSvgText().catch(() => {});
+      }
+    }
+
+
+    function isMiniMode() {
+      return new URLSearchParams(location.search || "").get("mini") === "1";
+    }
+
+    function setupMiniMode() {
+      if (!isMiniMode()) return;
+      document.documentElement.classList.add("mini");
+      document.body.classList.add("mini");
+      const miniTex = $("miniTex");
+      const miniSize = $("miniFontSize");
+      const miniFont = $("miniMathFont");
+      if (miniTex) miniTex.value = $("tex").value;
+      if (miniSize) miniSize.value = fmtNumber(sanitizeFontSize($("fontSize").value));
+      if (miniFont) miniFont.value = getSelectedFont();
+    }
+
+    function syncMiniToMain() {
+      const miniTex = $("miniTex");
+      const miniSize = $("miniFontSize");
+      const miniFont = $("miniMathFont");
+      if (miniTex) $("tex").value = miniTex.value;
+      if (miniSize) $("fontSize").value = fmtNumber(sanitizeFontSize(miniSize.value));
+      if (miniFont && getAvailableFonts().some(f => f.id === miniFont.value)) $("mathFont").value = miniFont.value;
+      saveState();
+    }
+
+    function syncMainToMini() {
+      const miniTex = $("miniTex");
+      const miniSize = $("miniFontSize");
+      const miniFont = $("miniMathFont");
+      if (miniTex) miniTex.value = $("tex").value;
+      if (miniSize) miniSize.value = fmtNumber(sanitizeFontSize($("fontSize").value));
+      if (miniFont) miniFont.value = getSelectedFont();
+    }
+
+    async function miniInsertWordFormula(mode = "inline") {
+      syncMiniToMain();
+      await insertWordFormulaAsMode(mode);
+      syncMainToMini();
+    }
+
+    async function miniInsertNumberedWordFormula(includeChapterNumber = false) {
+      syncMiniToMain();
+      const oldMode = $("formulaMode").value;
+      $("formulaMode").value = "display";
+      try {
+        await insertNumberedWordFormula({ includeChapterNumber });
+      } finally {
+        $("formulaMode").value = oldMode;
+        saveState();
+        syncMainToMini();
+      }
+    }
+
+    async function miniReadWordFormula() {
+      await readWordFormula();
+      syncMainToMini();
+      const miniTex = $("miniTex");
+      if (miniTex) {
+        miniTex.focus();
+        miniTex.select();
+      }
+    }
+
+    function closeMiniWindow() {
+      try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.close) {
+          window.pywebview.api.close();
+          return;
+        }
+      } catch (_) {}
+      // 普通浏览器模式下仍然尝试关闭；迷你 pywebview 模式下后端会隐藏窗口并保留托盘后台。
+      window.close();
+    }
+
+    $("copySvg").addEventListener("click", copySvgImage);
+    $("copySource").addEventListener("click", copySvgSource);
+    $("downloadSvg").addEventListener("click", downloadSvg);
+    $("insertWord").addEventListener("click", insertWordFormula);
+    $("insertDisplayWord").addEventListener("click", () => insertWordFormulaAsMode("display"));
+    $("insertNumberedWord").addEventListener("click", insertNumberedWordFormula);
+    $("readWord").addEventListener("click", readWordFormula);
+    $("updateWord").addEventListener("click", updateWordFormula);
+    $("tex").addEventListener("input", () => renderToSvgText().catch(() => {}));
+    $("formulaMode").addEventListener("change", () => renderToSvgText().catch(() => {}));
+    $("svgColor").addEventListener("input", () => renderToSvgText().catch(() => {}));
+    $("fontSize").addEventListener("input", () => renderToSvgText().catch(() => {}));
+    $("mathFont").addEventListener("change", handleFontChange);
+    $("includeChapterNumber").addEventListener("change", saveState);
+    $("miniInsertInlineWord").addEventListener("click", () => miniInsertWordFormula("inline").catch(err => setStatus("迷你窗口插入行内公式失败：" + err.message, true)));
+    $("miniInsertDisplayWord").addEventListener("click", () => miniInsertWordFormula("display").catch(err => setStatus("迷你窗口插入行间公式失败：" + err.message, true)));
+    $("miniInsertNumberedWord").addEventListener("click", () => miniInsertNumberedWordFormula(false).catch(err => setStatus("迷你窗口插入编号公式失败：" + err.message, true)));
+    $("miniInsertChapterNumberedWord").addEventListener("click", () => miniInsertNumberedWordFormula(true).catch(err => setStatus("迷你窗口插入章节编号公式失败：" + err.message, true)));
+    $("miniReadWord").addEventListener("click", () => miniReadWordFormula().catch(err => setStatus("迷你窗口读取公式失败：" + err.message, true)));
+    $("miniClose").addEventListener("click", closeMiniWindow);
+    $("miniTex").addEventListener("input", () => { syncMiniToMain(); renderToSvgText().catch(() => {}); });
+    $("miniTex").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        miniInsertWordFormula("inline").catch(err => setStatus("迷你窗口插入行内公式失败：" + err.message, true));
+      }
+    });
+    $("miniFontSize").addEventListener("change", () => { syncMiniToMain(); renderToSvgText().catch(() => {}); });
+    $("miniMathFont").addEventListener("change", () => {
+      syncMiniToMain();
+      handleFontChange();
+    });
+    window.addEventListener("paste", handlePaste);
+
+    $("pasteBox").addEventListener("dragover", (event) => { event.preventDefault(); $("pasteBox").classList.add("dragover"); });
+    $("pasteBox").addEventListener("dragleave", () => $("pasteBox").classList.remove("dragover"));
+    $("pasteBox").addEventListener("drop", handleDrop);
+
+    window.addEventListener("load", () => {
+      populateFonts();
+      restoreState();
+      setupMiniMode();
+      Promise.all([renderToSvgText(), checkWordEnvironment()])
+        .then(([, envText]) => { syncMainToMini(); setStatus("本地 MathJax 加载完成。当前字体：" + getSelectedFontLabel() + "；" + envText); })
+        .catch((err) => setStatus("初始化失败：" + err.message, true));
+    });
+  </script>
+</body>
+</html>
