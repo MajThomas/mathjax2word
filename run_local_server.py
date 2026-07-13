@@ -98,7 +98,13 @@ def _json_response(handler: http.server.BaseHTTPRequestHandler, status: int, pay
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
-        self.send_header("Cache-Control", "no-store")
+        # 页面/API 始终读取最新版本。MathJax 主程序允许缓存；字体动态分片
+        # 使用 no-store，避免此前错误路径产生的 404 被 WebView2 缓存。
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/vendor/mathjax/"):
+            self.send_header("Cache-Control", "public, max-age=86400")
+        else:
+            self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
     def do_GET(self):  # noqa: N802 - stdlib method name
@@ -138,13 +144,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         try:
-            from formula_word import insert_formula, insert_numbered_formula, read_selected_formula, update_selected_formula
+            from formula_word import (
+                convert_word_markers,
+                find_word_conversion_targets,
+                insert_formula,
+                insert_numbered_formula,
+                read_selected_formula,
+                update_selected_formula,
+                writeback_selected_formulas,
+            )
             if path == "/api/insert-word":
                 result = insert_formula(body)
             elif path == "/api/insert-numbered-word":
                 result = insert_numbered_formula(body)
             elif path == "/api/read-word":
                 result = read_selected_formula()
+            elif path == "/api/find-word-conversion-targets":
+                result = find_word_conversion_targets()
+            elif path == "/api/convert-word-markers":
+                result = convert_word_markers(body)
+            elif path == "/api/writeback-word-formulas":
+                result = writeback_selected_formulas()
             elif path == "/api/update-word":
                 result = update_selected_formula(body)
             else:
@@ -155,8 +175,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             _json_response(self, 500, {"ok": False, "error": str(exc)})
 
 
-class ReusableTCPServer(socketserver.TCPServer):
+class ReusableTCPServer(socketserver.ThreadingTCPServer):
+    # MathJax 会并行请求主组件、扩展和字体。线程服务器可避免单个请求占住
+    # 服务端后，其余组件长期排队等待。
     allow_reuse_address = True
+    daemon_threads = True
+    request_queue_size = 64
 
 
 if __name__ == "__main__":

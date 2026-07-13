@@ -14,6 +14,10 @@
 
   <script>
     (function () {
+      if (new URLSearchParams(location.search || "").get("mini") === "1") {
+        document.documentElement.classList.add("mini");
+      }
+
       const availableFonts = Array.isArray(window.LATEX_SVG_FONTS) && window.LATEX_SVG_FONTS.length
         ? window.LATEX_SVG_FONTS
         : [{ id: "mathjax-newcm", label: "MathJax New Computer Modern", builtin: true }];
@@ -27,12 +31,10 @@
       }
 
       const selectedFont = getInitialFont();
-      const paths = {};
-      for (const font of availableFonts) {
-        if (font.path && !font.builtin) paths[font.id] = font.path;
-      }
+      const localFontRoot = new URL("./vendor/fonts/", document.baseURI).href.replace(/\/$/, "");
 
       window.LATEX_SVG_SELECTED_FONT = selectedFont;
+      window.LATEX_SVG_LOCAL_FONT_ROOT = localFontRoot;
 
       window.MathJax = {
         startup: { typeset: false },
@@ -43,17 +45,23 @@
           processEscapes: true
         },
         loader: {
-          paths,
+          // MathJax 4 会按需加载字体字形数据。把官方字体包根目录明确指向
+          // 本地 vendor/fonts，避免首次渲染时回退到 jsDelivr。
+          paths: { fonts: localFontRoot },
           load: ["[tex]/ams", "[tex]/noerrors", "[tex]/noundefined"]
         },
-        svg: {
+        output: {
           font: selectedFont,
+          fontPath: "[fonts]/%%FONT%%-font"
+        },
+        svg: {
           fontCache: "local"
         }
       };
     })();
   </script>
-  <script defer src="./vendor/mathjax/tex-svg.js"></script>
+  <script id="MathJax-script" defer src="./vendor/mathjax/tex-svg.js"
+          onerror="window.LATEX_MATHJAX_LOAD_ERROR='本地 MathJax 主程序加载失败';"></script>
 
   <style>
     :root {
@@ -114,8 +122,8 @@
     code { background: #eef2ff; border-radius: 4px; padding: 1px 4px; }
 
     /* 迷你置顶窗口模式：由 start_mini_window.py 打开 ?mini=1 */
-    #miniBar { display: none; }
-    html.mini, body.mini {
+    #miniBar, #miniLoading { display: none; }
+    html.mini, html.mini body, body.mini {
       width: 100%;
       height: 40px !important;
       max-height: 40px !important;
@@ -123,12 +131,57 @@
       margin: 0;
       padding: 0;
       overflow: hidden !important;
-      background: #f3f4f6;
+      background: #111827;
       line-height: 1.2;
       box-sizing: border-box;
     }
-    body.mini main { display: none; }
-    body.mini #miniBar {
+    html.mini body main, body.mini main { display: none; }
+    html.mini body #miniLoading, body.mini #miniLoading {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      height: 40px;
+      width: 100vw;
+      box-sizing: border-box;
+      padding: 6px 10px;
+      border: 1px solid #374151;
+      background: #111827;
+      color: #d1fae5;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    #miniLoadingPrefix {
+      flex: 0 0 auto;
+      color: #93c5fd;
+      font-weight: 700;
+    }
+    #miniLoadingText {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #miniLoadingCursor {
+      flex: 0 0 auto;
+      color: #34d399;
+      animation: miniCursorBlink 0.8s steps(1, end) infinite;
+    }
+    @keyframes miniCursorBlink { 50% { opacity: 0; } }
+    html.mini body.mini-ready #miniLoading, body.mini.mini-ready #miniLoading { display: none; }
+    html.mini body.mini-ready.mini-operation #miniLoading,
+    body.mini.mini-ready.mini-operation #miniLoading { display: flex; }
+    html.mini body.mini-ready.mini-operation #miniBar,
+    body.mini.mini-ready.mini-operation #miniBar { display: none; }
+    body.mini.mini-operation-error #miniLoading {
+      background: #450a0a;
+      border-color: #991b1b;
+      color: #fecaca;
+    }
+    body.mini.mini-operation-error #miniLoadingPrefix { color: #fca5a5; }
+    body.mini.mini-operation-error #miniLoadingCursor { color: #fb7185; }
+    html.mini body.mini-ready #miniBar, body.mini.mini-ready #miniBar {
       display: flex;
       align-items: center;
       gap: 5px;
@@ -139,7 +192,6 @@
       padding: 6px 7px 3px; /* 上方约为按钮高度20%，下方约为10% */
       border: 1px solid #c7ccd1;
       background: #f8fafc;
-      -webkit-app-region: drag;
     }
     #miniTex {
       flex: 1 1 auto;
@@ -152,14 +204,12 @@
       font-size: 15px;
       font-family: Consolas, "Courier New", monospace;
       outline: none;
-      -webkit-app-region: no-drag;
     }
     #miniTex:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(37,99,235,.10); }
     #miniFontSize, #miniMathFont {
       height: 30px;
       box-sizing: border-box;
       font-size: 13px;
-      -webkit-app-region: no-drag;
     }
     #miniFontSize {
       min-width: 82px;
@@ -175,19 +225,57 @@
       white-space: nowrap;
       padding: 4px 8px;
       font-size: 13px;
-      -webkit-app-region: no-drag;
     }
     #miniInsertInlineWord { background: var(--accent); }
 
-    #miniDrag {
+    #miniInsertDrawer {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    body.mini.mini-drawer-collapsed #miniInsertDrawer { display: none; }
+    #miniDrawerToggle {
+      width: 30px;
+      min-width: 30px;
+      padding: 0 !important;
+      background: #64748b;
+      color: #ffffff;
+      font-size: 15px !important;
+      font-weight: 700;
+    }
+    #miniDrawerToggle:hover { background: #475569; }
+
+    .mini-drag-handle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
       width: 24px;
       min-width: 24px;
+      height: 30px;
+      box-sizing: border-box;
       padding: 0;
+      border: 0;
+      border-radius: 6px;
       cursor: move;
       user-select: none;
+      -webkit-user-select: none;
       background: #e2e8f0;
       color: #475569;
       font-weight: 700;
+      line-height: 1;
+      -webkit-app-region: drag;
+    }
+    .mini-drag-handle:hover { background: #cbd5e1; }
+    .mini-drag-handle:active { background: #b8c2cf; }
+    body.mini.mini-drag-lock #miniBar button,
+    body.mini.mini-drag-lock #miniBar input,
+    body.mini.mini-drag-lock #miniBar select {
+      pointer-events: none !important;
+    }
+    body.mini.mini-drag-lock .mini-drag-handle {
+      pointer-events: auto !important;
     }
     #miniColor {
       width: 76px;
@@ -206,14 +294,24 @@
   </style>
 </head>
 <body>
+  <div id="miniLoading" role="status" aria-live="polite" title="初始化中，可拖动窗口">
+    <span id="miniLoadingPrefix">[LaTeX 公式工具]</span>
+    <span id="miniLoadingText">正在加载页面与本地资源……</span>
+    <span id="miniLoadingCursor">█</span>
+  </div>
   <div id="miniBar">
-    <button id="miniDrag" class="drag-handle" title="拖动窗口">⋮⋮</button>
-    <input id="miniTex" type="text" spellcheck="false" title="输入 LaTeX 公式" />
-    <button id="miniInsertInlineWord">插入行内</button>
-    <button id="miniInsertDisplayWord" class="secondary">插入行间</button>
-    <button id="miniInsertNumberedWord" class="secondary">插入编号</button>
-    <button id="miniInsertChapterNumberedWord" class="secondary">章节编号</button>
+    <div id="miniDragLeft" class="mini-drag-handle pywebview-drag-region" title="拖动窗口" aria-label="拖动窗口">⋮⋮</div>
+    <button id="miniDrawerToggle" title="收起输入与插入控件" aria-expanded="true" aria-controls="miniInsertDrawer">◀</button>
+    <div id="miniInsertDrawer">
+      <input id="miniTex" type="text" spellcheck="false" title="输入 LaTeX 公式" />
+      <button id="miniInsertInlineWord">插入行内</button>
+      <button id="miniInsertDisplayWord" class="secondary">插入行间</button>
+      <button id="miniInsertNumberedWord" class="secondary">插入编号</button>
+      <button id="miniInsertChapterNumberedWord" class="secondary">章节编号</button>
+    </div>
     <button id="miniReadWord" class="ghost">读取</button>
+    <button id="miniConvertWord" class="ghost">转换</button>
+    <button id="miniWritebackWord" class="ghost" title="把选中的公式回写为 LaTeX 定界符文本">回写</button>
     <select id="miniFontSize" title="字号">
       <option value="6">6 pt</option>
       <option value="8">8 pt</option>
@@ -232,11 +330,13 @@
     <input id="miniColor" type="text" value="#000000" title="公式颜色，例如 #000000" spellcheck="false" />
     <select id="miniMathFont" title="公式字体"></select>
     <button id="miniClose" title="关闭">关闭</button>
+    <div id="miniDragRight" class="mini-drag-handle pywebview-drag-region" title="拖动窗口" aria-label="拖动窗口">⋮⋮</div>
   </div>
 
   <main>
     <h1>LaTeX → SVG/EMF → Word，本地版</h1>
     <p class="hint">复制/下载的 SVG 会在 <code>&lt;metadata&gt;&lt;latex-source&gt;...&lt;/latex-source&gt;&lt;/metadata&gt;</code> 中写入 LaTeX 源码。增强功能可把公式转换为 EMF 插入 Word，并把 LaTeX 源码和配置写入图片隐藏数据，后续可选中该公式回读并更新。</p>
+    <p class="hint">“转换”支持：<code>$公式$</code> → 行内，<code>$$公式$$</code> → 行间，<code>#公式#</code> → 编号，<code>##公式##</code> → 章节编号。非空选区会批量转换全部完整匹配；空选区只转换当前段落中包围光标的公式。“回写”执行逆向操作，可把选区内由本工具插入的公式批量恢复为对应 LaTeX 定界符文本。</p>
 
     <textarea id="tex" spellcheck="false">\frac{\partial u}{\partial t}=\alpha \nabla^2 u+f(x,t)</textarea>
 
@@ -248,6 +348,8 @@
       <button id="insertDisplayWord" class="secondary">插入 Word 行间公式</button>
       <button id="insertNumberedWord">插入 Word 编号公式</button>
       <button class="secondary" id="readWord">读取 Word 选中公式</button>
+      <button class="secondary" id="convertWord">转换</button>
+      <button class="secondary" id="writebackWord">回写为 LaTeX</button>
       <button class="secondary" id="updateWord">更新 Word 选中公式</button>
       <label>公式模式
         <select id="formulaMode">
@@ -292,6 +394,38 @@
   <script>
     const $ = (id) => document.getElementById(id);
 
+    // 只建立一个 MathJax 就绪 Promise。MathJax 4 的 Promise 转换接口会自行
+    // 串行化后续转换，因此不再在每次渲染前直接等待或改写 startup.promise。
+    let mathJaxReadyPromise = null;
+
+    function ensureMathJaxReady() {
+      if (mathJaxReadyPromise) return mathJaxReadyPromise;
+
+      mathJaxReadyPromise = (async () => {
+        if (window.LATEX_MATHJAX_LOAD_ERROR) {
+          throw new Error(window.LATEX_MATHJAX_LOAD_ERROR);
+        }
+        if (!window.MathJax) {
+          throw new Error("没有找到本地 MathJax 配置对象。");
+        }
+
+        // 本地 tex-svg.js 使用 startup.promise 作为唯一就绪信号。
+        // 不调用 whenReady，避免不同 MathJax 构建版本之间的接口不兼容。
+        if (!MathJax.startup || !MathJax.startup.promise) {
+          throw new Error("MathJax 主程序尚未完成加载，startup.promise 不可用。");
+        }
+        await MathJax.startup.promise;
+
+        if (typeof MathJax.tex2svgPromise !== "function") {
+          throw new Error("MathJax 已加载，但 tex2svgPromise 接口不可用。");
+        }
+        return true;
+      })();
+
+      mathJaxReadyPromise.catch(() => { mathJaxReadyPromise = null; });
+      return mathJaxReadyPromise;
+    }
+
     const STORAGE_KEYS = {
       tex: "latexSvgTex",
       color: "latexSvgColor",
@@ -299,13 +433,76 @@
       mode: "latexSvgFormulaMode",
       mathFont: "latexSvgMathFont",
       includeChapterNumber: "latexSvgIncludeChapterNumber",
-      fontSizeDefault12Migrated: "latexSvgFontSizeDefault12Migrated"
+      fontSizeDefault12Migrated: "latexSvgFontSizeDefault12Migrated",
+      miniDrawerCollapsed: "latexSvgMiniDrawerCollapsed"
     };
+
+    let miniOperationActive = false;
+    let miniOperationLastError = false;
+    let miniOperationHideTimer = null;
+
+    function updateMiniConsole(text, isError = false) {
+      if (!isMiniMode()) return;
+      const loadingText = $("miniLoadingText");
+      const loadingPrefix = $("miniLoadingPrefix");
+      const loading = $("miniLoading");
+      if (loadingText) loadingText.textContent = String(text || "正在处理……");
+      if (loadingPrefix) loadingPrefix.textContent = isError ? "[操作失败]" : "[LaTeX 公式工具]";
+      if (loading) loading.title = String(text || "正在处理……");
+      document.body.classList.toggle("mini-operation-error", !!isError);
+      miniOperationLastError = !!isError;
+    }
+
+    function beginMiniOperation(text) {
+      if (!isMiniMode()) return;
+      if (miniOperationHideTimer !== null) {
+        clearTimeout(miniOperationHideTimer);
+        miniOperationHideTimer = null;
+      }
+      miniOperationActive = true;
+      miniOperationLastError = false;
+      document.body.classList.add("mini-operation");
+      document.body.classList.remove("mini-operation-error");
+      updateMiniConsole(text || "正在处理……", false);
+    }
+
+    function waitForMiniConsolePaint() {
+      if (!isMiniMode()) return Promise.resolve();
+      return new Promise(resolve => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      });
+    }
+
+    function finishMiniOperation() {
+      if (!isMiniMode()) return;
+      miniOperationActive = false;
+      const delay = miniOperationLastError ? 2600 : 900;
+      miniOperationHideTimer = setTimeout(() => {
+        document.body.classList.remove("mini-operation", "mini-operation-error");
+        miniOperationHideTimer = null;
+      }, delay);
+    }
+
+    async function runMiniOperation(initialText, task) {
+      beginMiniOperation(initialText);
+      await waitForMiniConsolePaint();
+      try {
+        return await task();
+      } catch (err) {
+        setStatus("操作失败：" + (err && err.message ? err.message : String(err)), true);
+        return undefined;
+      } finally {
+        finishMiniOperation();
+      }
+    }
 
     function setStatus(text, isError = false) {
       const el = $("status");
       el.textContent = text;
       el.classList.toggle("error", !!isError);
+      if (miniOperationActive && isMiniMode()) {
+        updateMiniConsole(text, isError);
+      }
     }
 
     function stripMathDelimiters(raw) {
@@ -507,7 +704,7 @@
     }
 
     async function renderToSvgText() {
-      await MathJax.startup.promise;
+      await ensureMathJaxReady();
 
       const raw = $("tex").value;
       const tex = stripMathDelimiters(raw);
@@ -543,6 +740,49 @@
       const metadata = makeLatexMetadata(raw, mode, color, fontSize, mathFont);
       svgText = insertMetadataIntoSvg(svgText, metadata);
       return svgText;
+    }
+
+    async function renderLatexValueToSvgText(rawLatex, requestedMode) {
+      await ensureMathJaxReady();
+
+      const raw = String(rawLatex ?? "");
+      const tex = stripMathDelimiters(raw);
+      const mode = requestedMode === "display" ? "display" : "inline";
+      const color = sanitizeColor($("svgColor").value);
+      const fontSize = sanitizeFontSize($("fontSize").value);
+      const mathFont = getSelectedFont();
+
+      if (!tex.trim()) throw new Error("待转换公式的 LaTeX 源码为空。");
+
+      const texForMathJax = makeTexForMathJax(tex, mode);
+      const node = await MathJax.tex2svgPromise(texForMathJax, { display: mode === "display" });
+      const svg = node.querySelector("svg").cloneNode(true);
+      applyVisualSettingsToSvg(svg, color, fontSize, mode, mathFont);
+
+      let svgText = new XMLSerializer().serializeToString(svg).replace(/currentColor/g, color);
+      if (!svgText.startsWith("<svg")) svgText = svgText.replace(/^.*?(<svg)/s, "$1");
+      const metadata = makeLatexMetadata(raw, mode, color, fontSize, mathFont);
+      return insertMetadataIntoSvg(svgText, metadata);
+    }
+
+    function formulaPayloadFromRendered(svgText, latex, mode, includeChapterNumber = false) {
+      const normalizedMode = mode === "display" ? "display" : "inline";
+      return {
+        type: "latex-svg-formula",
+        version: 1,
+        latex: String(latex ?? ""),
+        mode: normalizedMode,
+        display: normalizedMode === "display",
+        color: sanitizeColor($("svgColor").value),
+        fontSize: sanitizeFontSize($("fontSize").value),
+        mathFont: getSelectedFont(),
+        mathFontLabel: getSelectedFontLabel(),
+        includeChapterNumber: !!includeChapterNumber,
+        renderer: "mathjax-svg",
+        displayImageFormat: "emf",
+        platform: "word-routeB",
+        svgText
+      };
     }
 
     async function copySvgImage() {
@@ -600,22 +840,12 @@
 
     function currentFormulaPayload(svgText) {
       const mode = $("formulaMode").value === "display" ? "display" : "inline";
-      return {
-        type: "latex-svg-formula",
-        version: 1,
-        latex: $("tex").value,
+      return formulaPayloadFromRendered(
+        svgText,
+        $("tex").value,
         mode,
-        display: mode === "display",
-        color: sanitizeColor($("svgColor").value),
-        fontSize: sanitizeFontSize($("fontSize").value),
-        mathFont: getSelectedFont(),
-        mathFontLabel: getSelectedFontLabel(),
-        includeChapterNumber: !!($("includeChapterNumber") && $("includeChapterNumber").checked),
-        renderer: "mathjax-svg",
-        displayImageFormat: "emf",
-        platform: "word-routeB",
-        svgText: svgText
-      };
+        !!($("includeChapterNumber") && $("includeChapterNumber").checked)
+      );
     }
 
     async function apiPost(path, payload = {}) {
@@ -640,6 +870,7 @@
       try {
         setStatus("正在生成 SVG 并插入 Word……");
         const svgText = await renderToSvgText();
+        setStatus("SVG 已生成，正在调用 Inkscape 转换为 EMF 并插入 Word……");
         const data = await apiPost("/api/insert-word", currentFormulaPayload(svgText));
         setStatus(data.message || "已插入 Word。EMF 用于显示，公式数据已隐藏保存。 ");
       } catch (err) {
@@ -673,6 +904,9 @@
         if (includeChapterOverride !== null) {
           payload.includeChapterNumber = includeChapterOverride;
         }
+        setStatus(includeChapterOverride
+          ? "SVG 已生成，正在调用 Inkscape 转换为 EMF 并插入章节编号公式……"
+          : "SVG 已生成，正在调用 Inkscape 转换为 EMF 并插入编号公式……");
         const data = await apiPost("/api/insert-numbered-word", payload);
         setStatus(data.message || "已插入 Word 编号公式。 ");
       } catch (err) {
@@ -694,10 +928,64 @@
       }
     }
 
+    async function convertWordLatexMarkers() {
+      try {
+        setStatus("正在识别 Word 选区中的 LaTeX 定界符……");
+        const found = await apiPost("/api/find-word-conversion-targets", {});
+        const matches = Array.isArray(found.matches) ? found.matches : [];
+        if (!matches.length) {
+          setStatus(found.message || "未找到可转换的 LaTeX 定界符，Word 内容未修改。");
+          return;
+        }
+
+        const items = [];
+        for (let index = 0; index < matches.length; index += 1) {
+          const target = matches[index];
+          const mode = target.mode === "display" ? "display" : "inline";
+          setStatus(`正在渲染第 ${index + 1}/${matches.length} 个公式……`);
+          const svgText = await renderLatexValueToSvgText(target.latex, mode);
+          const payload = formulaPayloadFromRendered(
+            svgText,
+            target.latex,
+            mode,
+            !!target.includeChapterNumber
+          );
+          items.push({
+            ...payload,
+            rangeStart: target.start,
+            rangeEnd: target.end,
+            sourceText: target.sourceText,
+            marker: target.marker,
+            formulaType: target.formulaType
+          });
+        }
+
+        setStatus(`正在调用 Inkscape 生成 ${items.length} 个 EMF，并原位写入 Word……`);
+        const data = await apiPost("/api/convert-word-markers", {
+          items,
+          documentIdentity: found.documentIdentity || ""
+        });
+        setStatus(data.message || `已转换 ${items.length} 个公式。`);
+      } catch (err) {
+        setStatus("转换 Word LaTeX 公式失败：" + err.message, true);
+      }
+    }
+
+    async function writebackWordFormulas() {
+      try {
+        setStatus("正在把 Word 选区中的公式回写为 LaTeX 编码……");
+        const data = await apiPost("/api/writeback-word-formulas", {});
+        setStatus(data.message || "已把选中的公式回写为 LaTeX 编码。");
+      } catch (err) {
+        setStatus("回写 Word 公式失败：" + err.message, true);
+      }
+    }
+
     async function updateWordFormula() {
       try {
-        setStatus("正在重新生成 EMF 并更新 Word 选中公式……");
+        setStatus("正在重新渲染选中公式……");
         const svgText = await renderToSvgText();
+        setStatus("SVG 已生成，正在调用 Inkscape 转换为 EMF 并更新 Word……");
         const data = await apiPost("/api/update-word", currentFormulaPayload(svgText));
         setStatus(data.message || "已更新 Word 选中公式。 ");
       } catch (err) {
@@ -933,7 +1221,40 @@
       return new URLSearchParams(location.search || "").get("mini") === "1";
     }
 
-    function setupMiniMode() {
+    function miniDrawerIsCollapsed() {
+      return document.body.classList.contains("mini-drawer-collapsed");
+    }
+
+    async function setMiniDrawerCollapsed(collapsed, options = {}) {
+      if (!isMiniMode()) return;
+      const shouldCollapse = !!collapsed;
+      const persist = options.persist !== false;
+      document.body.classList.toggle("mini-drawer-collapsed", shouldCollapse);
+
+      const toggle = $("miniDrawerToggle");
+      if (toggle) {
+        toggle.textContent = shouldCollapse ? "▶" : "◀";
+        toggle.title = shouldCollapse ? "展开输入与插入控件" : "收起输入与插入控件";
+        toggle.setAttribute("aria-expanded", shouldCollapse ? "false" : "true");
+      }
+      if (persist) {
+        localStorage.setItem(STORAGE_KEYS.miniDrawerCollapsed, shouldCollapse ? "1" : "0");
+      }
+
+      // 先更新 DOM，再让 Python 按预设宽度缩放原生窗口。
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.set_drawer_collapsed) {
+          await window.pywebview.api.set_drawer_collapsed(shouldCollapse);
+        }
+      } catch (_) {}
+    }
+
+    function toggleMiniDrawer() {
+      return setMiniDrawerCollapsed(!miniDrawerIsCollapsed());
+    }
+
+    async function setupMiniMode() {
       if (!isMiniMode()) return;
       document.documentElement.classList.add("mini");
       document.body.classList.add("mini");
@@ -945,6 +1266,21 @@
       if (miniSize) miniSize.value = fmtNumber(sanitizeFontSize($("fontSize").value));
       if (miniColor) miniColor.value = sanitizeColor($("svgColor").value || "#000000");
       if (miniFont) miniFont.value = getSelectedFont();
+      const collapsed = localStorage.getItem(STORAGE_KEYS.miniDrawerCollapsed) === "1";
+      await setMiniDrawerCollapsed(collapsed, { persist: false });
+    }
+
+    function setMiniLoadingMessage(message, isError = false) {
+      const text = $("miniLoadingText");
+      const cursor = $("miniLoadingCursor");
+      if (text) text.textContent = String(message || "");
+      if (text) text.style.color = isError ? "#FCA5A5" : "#D1FAE5";
+      if (cursor) cursor.style.color = isError ? "#F87171" : "#34D399";
+    }
+
+    function showMiniToolbar() {
+      document.body.classList.add("mini-ready");
+      document.documentElement.classList.add("mini-ready");
     }
 
     function syncMiniToMain() {
@@ -971,61 +1307,138 @@
     }
 
     async function miniInsertWordFormula(mode = "inline") {
-      syncMiniToMain();
-      await insertWordFormulaAsMode(mode);
-      syncMainToMini();
+      return runMiniOperation(
+        mode === "display" ? "正在准备行间公式……" : "正在准备行内公式……",
+        async () => {
+          syncMiniToMain();
+          await insertWordFormulaAsMode(mode);
+          syncMainToMini();
+        }
+      );
     }
 
     async function miniInsertNumberedWordFormula(includeChapterNumber = false) {
-      syncMiniToMain();
-      const oldMode = $("formulaMode").value;
-      $("formulaMode").value = "display";
-      try {
-        await insertNumberedWordFormula({ includeChapterNumber });
-      } finally {
-        $("formulaMode").value = oldMode;
-        saveState();
-        syncMainToMini();
-      }
+      return runMiniOperation(
+        includeChapterNumber ? "正在准备章节编号公式……" : "正在准备编号公式……",
+        async () => {
+          syncMiniToMain();
+          const oldMode = $("formulaMode").value;
+          $("formulaMode").value = "display";
+          try {
+            await insertNumberedWordFormula({ includeChapterNumber });
+          } finally {
+            $("formulaMode").value = oldMode;
+            saveState();
+            syncMainToMini();
+          }
+        }
+      );
     }
 
     async function miniReadWordFormula() {
-      await readWordFormula();
-      syncMainToMini();
-      const miniTex = $("miniTex");
-      if (miniTex) {
-        miniTex.focus();
-        miniTex.select();
-      }
+      return runMiniOperation("正在读取 Word 选中公式……", async () => {
+        await readWordFormula();
+        syncMainToMini();
+        const miniTex = $("miniTex");
+        if (miniTex) {
+          miniTex.focus();
+          miniTex.select();
+        }
+      });
     }
 
-    function setupMiniDragHandle() {
-      const handle = $("miniDrag");
-      if (!handle) return;
-      let dragging = false;
-      let lastX = 0;
-      let lastY = 0;
-      handle.addEventListener("mousedown", (event) => {
-        dragging = true;
-        lastX = event.screenX;
-        lastY = event.screenY;
-        event.preventDefault();
+    async function miniConvertWordLatexMarkers() {
+      return runMiniOperation("正在识别 Word 中的 LaTeX 定界符……", async () => {
+        syncMiniToMain();
+        await convertWordLatexMarkers();
+        syncMainToMini();
       });
-      window.addEventListener("mousemove", (event) => {
-        if (!dragging) return;
-        const dx = event.screenX - lastX;
-        const dy = event.screenY - lastY;
-        lastX = event.screenX;
-        lastY = event.screenY;
-        if (!dx && !dy) return;
-        try {
-          if (window.pywebview && window.pywebview.api && window.pywebview.api.drag_by) {
-            window.pywebview.api.drag_by(dx, dy);
+    }
+
+    async function miniWritebackWordFormulas() {
+      return runMiniOperation("正在回写 Word 公式的 LaTeX 编码……", async () => {
+        await writebackWordFormulas();
+        syncMainToMini();
+      });
+    }
+
+    function setupMiniDragInteractionLock() {
+      // 拖动本身交给 pywebview 的原生拖动区域处理。
+      // 这里只在鼠标按下把手后冻结操作控件，避免拖动期间按钮、输入框、
+      // 下拉框继续响应 hover/click/input 等事件；松开后立即恢复。
+      const handles = [$('miniDragLeft'), $('miniDragRight')].filter(Boolean);
+      if (!handles.length) return;
+
+      let dragLocked = false;
+      let safetyTimer = null;
+
+      const interactive = () => Array.from(document.querySelectorAll(
+        '#miniBar button, #miniBar input, #miniBar select'
+      ));
+
+      function setControlsDisabled(disabled) {
+        for (const el of interactive()) {
+          // 保存原始 disabled 状态，避免覆盖本来就不可用的控件。
+          if (disabled) {
+            if (!el.hasAttribute('data-mini-drag-disabled-before')) {
+              el.setAttribute('data-mini-drag-disabled-before', el.disabled ? '1' : '0');
+            }
+            el.disabled = true;
+          } else {
+            const before = el.getAttribute('data-mini-drag-disabled-before');
+            if (before !== null) {
+              el.disabled = before === '1';
+              el.removeAttribute('data-mini-drag-disabled-before');
+            }
           }
-        } catch (_) {}
+        }
+      }
+
+      function endDragLock() {
+        if (!dragLocked) return;
+        dragLocked = false;
+        document.body.classList.remove('mini-drag-lock');
+        setControlsDisabled(false);
+        if (safetyTimer !== null) {
+          clearTimeout(safetyTimer);
+          safetyTimer = null;
+        }
+      }
+
+      function beginDragLock(event) {
+        if (event.button !== 0) return;
+        dragLocked = true;
+        document.body.classList.add('mini-drag-lock');
+        setControlsDisabled(true);
+        // 极端情况下原生拖动吞掉 mouseup，最多 15 秒自动解锁，避免界面永久不可操作。
+        if (safetyTimer !== null) clearTimeout(safetyTimer);
+        safetyTimer = setTimeout(endDragLock, 15000);
+      }
+
+      for (const handle of handles) {
+        handle.addEventListener('mousedown', beginDragLock, true);
+        handle.addEventListener('pointerdown', beginDragLock, true);
+        handle.addEventListener('dblclick', (event) => event.preventDefault());
+      }
+
+      window.addEventListener('mouseup', endDragLock, true);
+      window.addEventListener('pointerup', endDragLock, true);
+      window.addEventListener('blur', endDragLock, true);
+      window.addEventListener('focus', endDragLock, true);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') endDragLock();
       });
-      window.addEventListener("mouseup", () => { dragging = false; });
-      handle.addEventListener("dblclick", (event) => event.preventDefault());
+      window.addEventListener('mousemove', (event) => {
+        if (dragLocked && event.buttons === 0) endDragLock();
+      }, true);
+
+      // 若原生拖动结束后 mouseup 未传回 WebView，用户下一次在操作区按下时先解锁，
+      // 当前这次操作仍可继续执行，不需要额外点击一次。
+      document.addEventListener('pointerdown', (event) => {
+        if (!dragLocked) return;
+        if (handles.some(handle => handle === event.target || handle.contains(event.target))) return;
+        endDragLock();
+      }, true);
     }
 
     function closeMiniWindow() {
@@ -1039,6 +1452,8 @@
       window.close();
     }
 
+    setupMiniDragInteractionLock();
+
     $("copySvg").addEventListener("click", copySvgImage);
     $("copySource").addEventListener("click", copySvgSource);
     $("downloadSvg").addEventListener("click", downloadSvg);
@@ -1046,6 +1461,8 @@
     $("insertDisplayWord").addEventListener("click", () => insertWordFormulaAsMode("display"));
     $("insertNumberedWord").addEventListener("click", insertNumberedWordFormula);
     $("readWord").addEventListener("click", readWordFormula);
+    $("convertWord").addEventListener("click", convertWordLatexMarkers);
+    $("writebackWord").addEventListener("click", writebackWordFormulas);
     $("updateWord").addEventListener("click", updateWordFormula);
     $("tex").addEventListener("input", () => renderToSvgText().catch(() => {}));
     $("formulaMode").addEventListener("change", () => renderToSvgText().catch(() => {}));
@@ -1075,12 +1492,14 @@
       syncMiniToMain();
       renderToSvgText().then(syncMainToMini).catch(() => {});
     });
-    setupMiniDragHandle();
     $("miniInsertInlineWord").addEventListener("click", () => miniInsertWordFormula("inline").catch(err => setStatus("迷你窗口插入行内公式失败：" + err.message, true)));
     $("miniInsertDisplayWord").addEventListener("click", () => miniInsertWordFormula("display").catch(err => setStatus("迷你窗口插入行间公式失败：" + err.message, true)));
     $("miniInsertNumberedWord").addEventListener("click", () => miniInsertNumberedWordFormula(false).catch(err => setStatus("迷你窗口插入编号公式失败：" + err.message, true)));
     $("miniInsertChapterNumberedWord").addEventListener("click", () => miniInsertNumberedWordFormula(true).catch(err => setStatus("迷你窗口插入章节编号公式失败：" + err.message, true)));
     $("miniReadWord").addEventListener("click", () => miniReadWordFormula().catch(err => setStatus("迷你窗口读取公式失败：" + err.message, true)));
+    $("miniConvertWord").addEventListener("click", () => miniConvertWordLatexMarkers().catch(err => setStatus("迷你窗口转换公式失败：" + err.message, true)));
+    $("miniWritebackWord").addEventListener("click", () => miniWritebackWordFormulas().catch(err => setStatus("迷你窗口回写公式失败：" + err.message, true)));
+    $("miniDrawerToggle").addEventListener("click", () => toggleMiniDrawer().catch(() => {}));
     $("miniClose").addEventListener("click", closeMiniWindow);
     $("miniTex").addEventListener("input", () => { syncMiniToMain(); renderToSvgText().catch(() => {}); });
     $("miniTex").addEventListener("keydown", (event) => {
@@ -1100,13 +1519,39 @@
     $("pasteBox").addEventListener("dragleave", () => $("pasteBox").classList.remove("dragover"));
     $("pasteBox").addEventListener("drop", handleDrop);
 
-    window.addEventListener("load", () => {
-      populateFonts();
-      restoreState();
-      setupMiniMode();
-      Promise.all([renderToSvgText(), checkWordEnvironment()])
-        .then(([, envText]) => { syncMainToMini(); setStatus("本地 MathJax 加载完成。当前字体：" + getSelectedFontLabel() + "；" + envText); })
-        .catch((err) => setStatus("初始化失败：" + err.message, true));
+    window.addEventListener("load", async () => {
+      try {
+        if (isMiniMode()) setMiniLoadingMessage("正在读取字体配置……");
+        populateFonts();
+
+        if (isMiniMode()) setMiniLoadingMessage("正在恢复公式与界面设置……");
+        restoreState();
+        await setupMiniMode();
+
+        if (isMiniMode()) setMiniLoadingMessage("MathJax 主程序已加载，正在初始化组件……");
+        await ensureMathJaxReady();
+        syncMainToMini();
+
+        setStatus("本地 MathJax 初始化完成。当前字体：" + getSelectedFontLabel() + "。可开始操作。");
+        if (isMiniMode()) {
+          // 迷你窗口启动阶段不再执行任何测试公式渲染。
+          // 真正点击插入、转换或修改输入框时，再按需调用 tex2svgPromise。
+          setMiniLoadingMessage("MathJax 初始化完成，正在打开操作界面……");
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          showMiniToolbar();
+          const miniTex = $("miniTex");
+          if (miniTex && !miniDrawerIsCollapsed()) miniTex.focus();
+        } else {
+          // 完整页面仍在启动后生成预览；这不会影响迷你窗口显示。
+          await renderToSvgText();
+        }
+      } catch (err) {
+        const initError = err && err.message ? err.message : String(err || "未知错误");
+        setStatus("初始化失败：" + initError, true);
+        if (isMiniMode()) {
+          setMiniLoadingMessage("初始化失败：" + initError, true);
+        }
+      }
     });
   </script>
 </body>

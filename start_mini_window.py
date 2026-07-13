@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import os
 import socket
 import sys
@@ -14,8 +15,78 @@ PORT = int(os.environ.get("LATEX_SVG_PORT", "8000"))
 HOST = "127.0.0.1"
 URL = f"http://localhost:{PORT}/latex-svg-clipboard.html?mini=1"
 MINI_WIDTH = int(os.environ.get("LATEX_SVG_MINI_WIDTH", "1240"))
+MINI_COLLAPSED_WIDTH = int(os.environ.get("LATEX_SVG_MINI_COLLAPSED_WIDTH", "650"))
 MINI_HEIGHT = int(os.environ.get("LATEX_SVG_MINI_HEIGHT", "40"))
 LOG_FILE = ROOT / "mini_window.log"
+SINGLE_INSTANCE_MUTEX_NAME = r"Local\LatexSvgClipboardMiniWindow"
+_SINGLE_INSTANCE_MUTEX_HANDLE = None
+
+# 注意：绝不能把 pywebview Window 对象保存到 js_api 实例的公开属性中。
+# pywebview 注册 JS API 时会检查对象属性；若属性引用 Window，就可能继续遍历
+# window.native（WinForms/WebView2 对象树），造成循环引用、递归溢出和非 UI 线程 COM 异常。
+# 因此窗口与抽屉状态只保存在模块私有状态中，MiniApi 本身保持完全无状态。
+_MINI_RUNTIME: dict[str, object] = {
+    "window": None,
+    "drawer_collapsed": False,
+    "current_width": MINI_WIDTH,
+}
+
+
+def _release_single_instance_lock() -> None:
+    """释放 Windows 命名互斥量句柄；进程异常退出时系统也会自动释放。"""
+    global _SINGLE_INSTANCE_MUTEX_HANDLE
+    handle = _SINGLE_INSTANCE_MUTEX_HANDLE
+    _SINGLE_INSTANCE_MUTEX_HANDLE = None
+    if not handle or not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+
+
+def _acquire_single_instance_lock() -> bool:
+    """
+    获取迷你窗口的单实例锁。
+
+    返回 False 表示已有实例正在运行。调用方应直接结束当前（第二个）进程，
+    不唤出、不隐藏，也不关闭已经运行的第一个实例。
+    """
+    global _SINGLE_INSTANCE_MUTEX_HANDLE
+
+    if not sys.platform.startswith("win"):
+        # 该工具的迷你窗口主要面向 Windows；其他平台不额外限制。
+        return True
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_mutex = kernel32.CreateMutexW
+        create_mutex.argtypes = (wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR)
+        create_mutex.restype = wintypes.HANDLE
+
+        handle = create_mutex(None, False, SINGLE_INSTANCE_MUTEX_NAME)
+        if not handle:
+            # 互斥量创建失败时不阻断程序启动，但记录错误便于排查。
+            _log(f"创建单实例互斥量失败，WinError={ctypes.get_last_error()}")
+            return True
+
+        ERROR_ALREADY_EXISTS = 183
+        if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(handle)
+            return False
+
+        _SINGLE_INSTANCE_MUTEX_HANDLE = handle
+        atexit.register(_release_single_instance_lock)
+        return True
+    except Exception:
+        _log("创建单实例锁失败：\n" + traceback.format_exc())
+        # 锁机制异常时仍允许启动，避免工具完全不可用。
+        return True
 
 
 def _log(message: str) -> None:
@@ -195,52 +266,39 @@ class WinTrayIcon:
 
 
 class MiniApi:
-    def __init__(self) -> None:
-        self.window = None
+    """仅向 JavaScript 暴露基础类型接口；实例本身不持有 Window/COM/.NET 对象。"""
 
-    def attach(self, window) -> None:  # noqa: ANN001
-        self.window = window
+    __slots__ = ()
 
-    def show(self):
-        return _show_window(self.window)
+    def show(self) -> bool:
+        window = _MINI_RUNTIME.get("window")
+        width = int(_MINI_RUNTIME.get("current_width") or MINI_WIDTH)
+        return _show_window(window, width)
 
-    def hide(self):
-        return _hide_window(self.window)
+    def set_drawer_collapsed(self, collapsed=False) -> dict[str, object]:
+        if isinstance(collapsed, str):
+            collapsed = collapsed.strip().lower() in ("1", "true", "yes", "on")
 
-    def close(self):
+        is_collapsed = bool(collapsed)
+        width = MINI_COLLAPSED_WIDTH if is_collapsed else MINI_WIDTH
+        _MINI_RUNTIME["drawer_collapsed"] = is_collapsed
+        _MINI_RUNTIME["current_width"] = width
+
+        try:
+            window = _MINI_RUNTIME.get("window")
+            if window is not None:
+                window.resize(width, MINI_HEIGHT)
+            return {"ok": True, "collapsed": is_collapsed, "width": width}
+        except Exception:
+            _log("调整抽屉窗口宽度失败：\n" + traceback.format_exc())
+            return {"ok": False, "collapsed": is_collapsed, "width": width}
+
+    def hide(self) -> bool:
+        return _hide_window(_MINI_RUNTIME.get("window"))
+
+    def close(self) -> bool:
         # 关闭按钮只隐藏窗口，不结束后台。需要完全退出时，从托盘图标右键选择“退出后台”。
         return self.hide()
-
-    def drag_by(self, dx=0, dy=0):
-        """仅允许通过页面上的拖动句柄移动窗口，避免整个窗口任意位置可拖动。"""
-        try:
-            dx = int(float(dx))
-            dy = int(float(dy))
-        except Exception:
-            return False
-        if dx == 0 and dy == 0:
-            return True
-        # 优先使用 pywebview 的 move/x/y 能力。
-        try:
-            if self.window is not None and hasattr(self.window, "move"):
-                x = int(getattr(self.window, "x", 0) or 0)
-                y = int(getattr(self.window, "y", 0) or 0)
-                self.window.move(x + dx, y + dy)
-                return True
-        except Exception:
-            pass
-        # Windows 下回退到 Win32 移动当前前台窗口，不新增依赖。
-        if sys.platform.startswith("win"):
-            try:
-                import win32gui  # type: ignore
-                hwnd = win32gui.GetForegroundWindow()
-                if hwnd:
-                    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-                    win32gui.MoveWindow(hwnd, left + dx, top + dy, right - left, bottom - top, True)
-                    return True
-            except Exception:
-                _log("拖动窗口失败：\n" + traceback.format_exc())
-        return False
 
 
 def _hide_window(window) -> bool:  # noqa: ANN001
@@ -257,7 +315,7 @@ def _hide_window(window) -> bool:  # noqa: ANN001
     return False
 
 
-def _show_window(window) -> bool:  # noqa: ANN001
+def _show_window(window, width: int = MINI_WIDTH) -> bool:  # noqa: ANN001
     if window is None:
         return False
     for method_name in ("show", "restore"):
@@ -273,34 +331,18 @@ def _show_window(window) -> bool:  # noqa: ANN001
     except Exception:
         pass
     try:
-        window.resize(MINI_WIDTH, MINI_HEIGHT)
+        window.resize(int(width), MINI_HEIGHT)
     except Exception:
         pass
     try:
-        window.evaluate_js("document.getElementById('miniTex')?.focus();")
+        window.evaluate_js(
+            "(document.body.classList.contains('mini-drawer-collapsed')"
+            " ? document.getElementById('miniDrawerToggle')"
+            " : document.getElementById('miniTex'))?.focus();"
+        )
     except Exception:
         pass
     return True
-
-
-def _force_compact_size(window) -> None:  # noqa: ANN001
-    """尽量绕过不同 pywebview 后端的默认最小高度，让迷你栏保持真实紧凑。"""
-    for _ in range(8):
-        time.sleep(0.12)
-        try:
-            window.resize(MINI_WIDTH, MINI_HEIGHT)
-        except Exception:
-            pass
-        try:
-            # 部分后端允许通过 JS 再约束 Web 内容区高度，避免窗口缩小后出现空白。
-            window.evaluate_js(
-                "document.documentElement.classList.add('mini');"
-                "document.body.classList.add('mini');"
-                "document.documentElement.style.height='40px';"
-                "document.body.style.height='40px';"
-            )
-        except Exception:
-            pass
 
 
 def _exit_process(window, tray: Optional[WinTrayIcon]) -> None:  # noqa: ANN001
@@ -318,6 +360,12 @@ def _exit_process(window, tray: Optional[WinTrayIcon]) -> None:  # noqa: ANN001
 
 
 def main() -> int:
+    # 必须在导入 pywebview、启动本地服务和创建托盘之前获取锁。
+    # 检测到已有实例时，仅结束本次启动的第二个进程，不影响首个实例。
+    if not _acquire_single_instance_lock():
+        _safe_print("LaTeX 公式迷你窗口已经在运行，本次启动已退出。")
+        return 0
+
     try:
         import webview  # type: ignore
     except Exception:
@@ -334,38 +382,41 @@ def main() -> int:
 
     api = MiniApi()
     tray_ref: dict[str, Optional[WinTrayIcon]] = {"tray": None}
-    window_ref: dict[str, object | None] = {"window": None}
 
     def show_from_tray() -> None:
-        _show_window(window_ref["window"])
+        api.show()
 
     def exit_from_tray() -> None:
-        _exit_process(window_ref["window"], tray_ref["tray"])
+        _exit_process(_MINI_RUNTIME.get("window"), tray_ref["tray"])
 
     kwargs = dict(
         title="LaTeX 公式",
         url=URL,
         width=MINI_WIDTH,
         height=MINI_HEIGHT,
-        min_size=(MINI_WIDTH, MINI_HEIGHT),
+        min_size=(MINI_COLLAPSED_WIDTH, MINI_HEIGHT),
         resizable=False,
         frameless=True,
         on_top=True,
         js_api=api,
-        background_color="#f8fafc",
+        background_color="#111827",
     )
+    # easy_drag=False 禁止整窗任意位置拖动；HTML 中仅左右把手使用
+    # pywebview-drag-region + -webkit-app-region: drag。
     try:
         window = webview.create_window(easy_drag=False, **kwargs)
     except TypeError:
-        # 兼容旧版本 pywebview：去掉不支持的参数。
+        # 兼容旧版本 pywebview：去掉不支持的 min_size/easy_drag 参数。
         kwargs.pop("min_size", None)
         try:
             window = webview.create_window(easy_drag=False, **kwargs)
         except TypeError:
             window = webview.create_window(**kwargs)
 
-    api.attach(window)
-    window_ref["window"] = window
+    # Window 仅保存到模块私有状态，禁止挂到 js_api 实例上。
+    _MINI_RUNTIME["window"] = window
+    _MINI_RUNTIME["drawer_collapsed"] = False
+    _MINI_RUNTIME["current_width"] = MINI_WIDTH
 
     tray = WinTrayIcon(on_show=show_from_tray, on_exit=exit_from_tray)
     tray_ref["tray"] = tray
@@ -376,7 +427,7 @@ def main() -> int:
                 tray.start()
         except Exception:
             _log("系统托盘初始化失败：\n" + traceback.format_exc())
-        _force_compact_size(window)
+
 
     _safe_print(f"迷你窗口已启动：{URL}")
     try:

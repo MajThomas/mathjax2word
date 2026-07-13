@@ -25,6 +25,14 @@ WD_ALIGN_PARAGRAPH_CENTER = 1
 WD_ALIGN_PARAGRAPH_RIGHT = 2
 EQUATION_SEQUENCE_NAME = "LatexSvgEq"
 
+# 四类 Word 文本定界符。必须按“长定界符优先”识别，避免 $ 与 $$、# 与 ## 互相串扰。
+FORMULA_MARKER_SPECS = (
+    {"marker": "##", "formulaType": "chapter-numbered", "mode": "display", "includeChapterNumber": True},
+    {"marker": "$$", "formulaType": "display", "mode": "display", "includeChapterNumber": False},
+    {"marker": "#", "formulaType": "numbered", "mode": "display", "includeChapterNumber": False},
+    {"marker": "$", "formulaType": "inline", "mode": "inline", "includeChapterNumber": False},
+)
+
 
 class WordFormulaError(RuntimeError):
     """Word 公式插入/读取/更新错误。"""
@@ -48,15 +56,216 @@ def _word_app():
         raise WordFormulaError("没有检测到正在运行的 Word。请先打开 Word 文档，并把光标放到要插入公式的位置。") from exc
 
 
-def _save_formula_files(payload: dict[str, Any]) -> tuple[Path, Path, Path]:
+def _document_identity(doc: Any) -> str:
+    for attr in ("FullName", "Name"):
+        try:
+            value = str(getattr(doc, attr) or "").strip()
+            if value:
+                return value
+        except Exception:
+            pass
+    return ""
+
+
+def _utf16_length(text: str) -> int:
+    """Word Range 使用 UTF-16 字符位置；这里把 Python 字符下标转换为 Word 偏移。"""
+    return len(str(text).encode("utf-16-le")) // 2
+
+
+def _is_escaped(text: str, index: int) -> bool:
+    """判断 index 位置的定界符前是否有奇数个反斜杠。"""
+    slash_count = 0
+    pos = index - 1
+    while pos >= 0 and text[pos] == "\\":
+        slash_count += 1
+        pos -= 1
+    return slash_count % 2 == 1
+
+
+def _double_marker_at(text: str, index: int, marker: str) -> bool:
+    return index >= 0 and text.startswith(marker, index) and not _is_escaped(text, index)
+
+
+def _single_marker_at(text: str, index: int, marker: str) -> bool:
+    return index >= 0 and index < len(text) and text[index] == marker and not _is_escaped(text, index)
+
+
+def _marker_spec_at(text: str, index: int) -> dict[str, Any] | None:
+    for spec in FORMULA_MARKER_SPECS:
+        marker = str(spec["marker"])
+        if len(marker) == 2:
+            matched = _double_marker_at(text, index, marker)
+        else:
+            matched = _single_marker_at(text, index, marker)
+        if matched:
+            return spec
+    return None
+
+
+def _find_closing_marker(text: str, start: int, marker: str) -> int:
+    pos = start
+    while pos < len(text):
+        if len(marker) == 2:
+            matched = _double_marker_at(text, pos, marker)
+        else:
+            matched = _single_marker_at(text, pos, marker)
+        if matched:
+            return pos
+        pos += 1
+    return -1
+
+
+def _scan_formula_markers(text: str, *, base_start: int = 0) -> list[dict[str, Any]]:
+    """扫描互不重叠的 LaTeX 定界符，返回 Word 绝对范围。"""
+    matches: list[dict[str, Any]] = []
+    pos = 0
+    while pos < len(text):
+        spec = _marker_spec_at(text, pos)
+        if spec is None:
+            pos += 1
+            continue
+
+        marker = str(spec["marker"])
+        content_start = pos + len(marker)
+        close_pos = _find_closing_marker(text, content_start, marker)
+        if close_pos < 0:
+            # 双字符起始符未闭合时，整段跳过，不能退化成单字符定界符。
+            pos += len(marker)
+            continue
+
+        latex = text[content_start:close_pos]
+        end_pos = close_pos + len(marker)
+        if latex.strip():
+            start_word = base_start + _utf16_length(text[:pos])
+            content_start_word = base_start + _utf16_length(text[:content_start])
+            content_end_word = base_start + _utf16_length(text[:close_pos])
+            end_word = base_start + _utf16_length(text[:end_pos])
+            matches.append({
+                "start": start_word,
+                "end": end_word,
+                "contentStart": content_start_word,
+                "contentEnd": content_end_word,
+                "latex": latex,
+                "sourceText": text[pos:end_pos],
+                "marker": marker,
+                "formulaType": spec["formulaType"],
+                "mode": spec["mode"],
+                "includeChapterNumber": bool(spec["includeChapterNumber"]),
+            })
+        pos = end_pos
+    return matches
+
+
+def _clean_conversion_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    data = dict(payload)
+    for key in ("rangeStart", "rangeEnd", "start", "end", "sourceText", "marker", "markerType", "formulaType"):
+        data.pop(key, None)
+    return data
+
+
+def _compact_formula_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """只保留回读、更新和回写公式真正需要的隐藏数据。"""
+    mode = str(payload.get("mode") or "").lower()
+    if mode not in ("inline", "display"):
+        mode = "display" if bool(payload.get("display")) else "inline"
+
+    data: dict[str, Any] = {
+        "type": "latex-svg-formula",
+        "version": 1,
+        "latex": str(payload.get("latex") or ""),
+        "mode": mode,
+    }
+
+    color = str(payload.get("color") or "").strip()
+    if color:
+        data["color"] = color
+
+    font_size = payload.get("fontSize")
+    if font_size is not None and font_size != "":
+        try:
+            numeric_size = float(font_size)
+            data["fontSize"] = int(numeric_size) if numeric_size.is_integer() else numeric_size
+        except Exception:
+            data["fontSize"] = font_size
+
+    math_font = str(payload.get("mathFont") or "").strip()
+    if math_font:
+        data["mathFont"] = math_font
+
+    if bool(payload.get("numbered")):
+        data["numbered"] = True
+        data["includeChapterNumber"] = bool(payload.get("includeChapterNumber"))
+
+    return data
+
+
+def _encode_formula_alt(payload: dict[str, Any]) -> str:
+    return encode_payload(_compact_formula_payload(payload))
+
+
+def _visible_paragraph_text(text: str) -> str:
+    return str(text or "").replace("\r", "").replace("\x07", "").strip()
+
+
+def _prepare_block_insertion_range(doc: Any, target_range: Any) -> Any:
+    """
+    把目标定界符替换为独立段落插槽，供行间公式或编号表格使用。
+
+    若定界符已经独占段落，只清空定界符；若与正文同行，则按前后正文情况插入
+    一个或两个段落标记，保证公式成为独立块且不改变相邻正文段落的对齐方式。
+    """
+    start = int(target_range.Start)
+    end = int(target_range.End)
+    try:
+        para = target_range.Paragraphs.Item(1).Range
+        para_start = int(para.Start)
+        para_end = int(para.End)
+        before = str(doc.Range(para_start, start).Text or "")
+        after = str(doc.Range(end, para_end).Text or "")
+        has_before = bool(_visible_paragraph_text(before))
+        has_after = bool(_visible_paragraph_text(after))
+        spans_multiple_paragraphs = int(target_range.Paragraphs.Count) > 1
+    except Exception:
+        has_before = True
+        has_after = True
+        spans_multiple_paragraphs = True
+
+    if not spans_multiple_paragraphs and not has_before and not has_after:
+        target_range.Text = ""
+        return doc.Range(start, start)
+
+    if has_before and has_after:
+        target_range.Text = "\r\r"
+        return doc.Range(start + 1, start + 1)
+    if has_before:
+        target_range.Text = "\r"
+        return doc.Range(start + 1, start + 1)
+    if has_after:
+        target_range.Text = "\r"
+        return doc.Range(start, start)
+
+    target_range.Text = ""
+    return doc.Range(start, start)
+
+
+def _save_formula_files(payload: dict[str, Any], *, stem: str | None = None) -> tuple[Path, Path, Path]:
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     svg = payload.get("svgText") or payload.get("svg")
     if not isinstance(svg, str) or "<svg" not in svg:
         raise WordFormulaError("前端没有传入有效 SVG，无法生成 EMF。")
-    LAST_JSON.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    LAST_SVG.write_text(svg, encoding="utf-8")
-    svg_to_emf(LAST_SVG, LAST_EMF)
-    return LAST_JSON, LAST_SVG, LAST_EMF
+
+    if stem:
+        safe_stem = re.sub(r"[^0-9A-Za-z_.-]+", "_", stem).strip("._") or "formula"
+        json_path = TEMP_DIR / f"{safe_stem}.json"
+        svg_path = TEMP_DIR / f"{safe_stem}.svg"
+        emf_path = TEMP_DIR / f"{safe_stem}.emf"
+    else:
+        json_path, svg_path, emf_path = LAST_JSON, LAST_SVG, LAST_EMF
+
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    svg_path.write_text(svg, encoding="utf-8")
+    svg_to_emf(svg_path, emf_path)
+    return json_path, svg_path, emf_path
 
 
 def _set_alt_text(obj: Any, alt_text: str) -> None:
@@ -344,7 +553,7 @@ def insert_formula(payload: dict[str, Any]) -> dict[str, Any]:
     word = _word_app()
     selection = word.Selection
     _, _, emf_path = _save_formula_files(payload)
-    alt_text = encode_payload(payload)
+    alt_text = _encode_formula_alt(payload)
     is_display = bool(payload.get("display")) or str(payload.get("mode") or "").lower() == "display"
 
     try:
@@ -406,7 +615,7 @@ def insert_numbered_formula(payload: dict[str, Any]) -> dict[str, Any]:
     payload["includeChapterNumber"] = include_chapter
 
     _, _, emf_path = _save_formula_files(payload)
-    alt_text = encode_payload(payload)
+    alt_text = _encode_formula_alt(payload)
 
     try:
         rng = selection.Range
@@ -519,9 +728,14 @@ def update_selected_formula(payload: dict[str, Any]) -> dict[str, Any]:
     ):
         if key in old_data and key not in payload:
             payload[key] = old_data[key]
+    # 编号布局不会在“更新图片”时变化，因此编号类型必须以旧对象为准，
+    # 避免用户未先点击“读取”时把章节编号误写成普通编号。
+    if bool(old_data.get("numbered")):
+        payload["numbered"] = True
+        payload["includeChapterNumber"] = bool(old_data.get("includeChapterNumber"))
 
     _, _, emf_path = _save_formula_files(payload)
-    alt_text = encode_payload(payload)
+    alt_text = _encode_formula_alt(payload)
 
     try:
         if kind == "inline":
@@ -552,6 +766,531 @@ def update_selected_formula(payload: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         raise WordFormulaError(f"更新 Word 公式失败：{exc}") from exc
 
+
+def find_word_conversion_targets() -> dict[str, Any]:
+    """
+    读取 Word 当前选区中的 LaTeX 定界符。
+
+    - 非空选区：识别选区内全部完整定界符；
+    - 空选区：只识别当前段落中包围光标的一个完整定界符；
+    - 无匹配时返回空列表，不修改 Word。
+    """
+    word = _word_app()
+    doc = word.ActiveDocument
+    selection = word.Selection
+    rng = selection.Range
+    selection_start = int(rng.Start)
+    selection_end = int(rng.End)
+    selection_empty = selection_start == selection_end
+
+    if not selection_empty:
+        text = str(rng.Text or "")
+        matches = _scan_formula_markers(text, base_start=selection_start)
+    else:
+        try:
+            paragraph_range = rng.Paragraphs.Item(1).Range
+            paragraph_start = int(paragraph_range.Start)
+            paragraph_text = str(paragraph_range.Text or "")
+        except Exception:
+            paragraph_start = selection_start
+            paragraph_text = ""
+
+        all_matches = _scan_formula_markers(paragraph_text, base_start=paragraph_start)
+        enclosing = [
+            item for item in all_matches
+            if int(item["start"]) <= selection_start <= int(item["end"])
+        ]
+        # 理论上扫描结果互不重叠；仍按最短范围优先，避免异常文档中的歧义。
+        enclosing.sort(key=lambda item: (int(item["end"]) - int(item["start"]), abs(selection_start - int(item["contentStart"]))))
+        matches = enclosing[:1]
+
+    if not matches:
+        return {
+            "ok": True,
+            "message": "未找到可转换的 LaTeX 定界符，Word 内容未修改。",
+            "matches": [],
+            "selectionEmpty": selection_empty,
+            "documentIdentity": _document_identity(doc),
+        }
+
+    return {
+        "ok": True,
+        "message": f"已识别 {len(matches)} 个待转换公式。",
+        "matches": matches,
+        "selectionEmpty": selection_empty,
+        "documentIdentity": _document_identity(doc),
+    }
+
+
+def _validate_conversion_item(doc: Any, item: dict[str, Any]) -> tuple[int, int, dict[str, Any], str]:
+    try:
+        start = int(item.get("rangeStart", item.get("start")))
+        end = int(item.get("rangeEnd", item.get("end")))
+    except Exception as exc:
+        raise WordFormulaError("转换请求缺少有效的 Word 范围。") from exc
+    if start < 0 or end <= start:
+        raise WordFormulaError("转换请求中的 Word 范围无效。")
+
+    expected_source = str(item.get("sourceText") or "")
+    try:
+        current_source = str(doc.Range(start, end).Text or "")
+    except Exception as exc:
+        raise WordFormulaError("无法读取待转换公式在 Word 中的当前位置。") from exc
+    if not expected_source or current_source != expected_source:
+        raise WordFormulaError("Word 选区内容在渲染期间发生了变化，已取消转换，文档未修改。")
+
+    parsed = _scan_formula_markers(current_source, base_start=start)
+    if len(parsed) != 1 or int(parsed[0]["start"]) != start or int(parsed[0]["end"]) != end:
+        raise WordFormulaError("待转换文本不再是一个完整且独立的公式定界符，已取消转换。")
+
+    expected_type = str(item.get("formulaType") or item.get("markerType") or "")
+    if expected_type and parsed[0]["formulaType"] != expected_type:
+        raise WordFormulaError("公式定界符类型发生变化，已取消转换。")
+    if str(item.get("latex") or "") != str(parsed[0]["latex"]):
+        raise WordFormulaError("公式源码发生变化，已取消转换。")
+
+    payload = _clean_conversion_payload(item)
+    payload["latex"] = parsed[0]["latex"]
+    payload["mode"] = parsed[0]["mode"]
+    payload["display"] = parsed[0]["mode"] == "display"
+    payload["includeChapterNumber"] = bool(parsed[0]["includeChapterNumber"])
+    return start, end, payload, str(parsed[0]["formulaType"])
+
+
+def _insert_converted_inline(doc: Any, start: int, end: int, payload: dict[str, Any], emf_path: Path) -> None:
+    rng = doc.Range(start, end)
+    rng.Text = ""
+    insertion = doc.Range(start, start)
+    formula_obj = insertion.InlineShapes.AddPicture(
+        FileName=str(emf_path),
+        LinkToFile=False,
+        SaveWithDocument=True,
+    )
+    _set_alt_text(formula_obj, _encode_formula_alt(payload))
+
+
+def _insert_converted_display(doc: Any, start: int, end: int, payload: dict[str, Any], emf_path: Path) -> None:
+    slot = _prepare_block_insertion_range(doc, doc.Range(start, end))
+    try:
+        slot.ParagraphFormat.Alignment = WD_ALIGN_PARAGRAPH_CENTER
+        slot.ParagraphFormat.SpaceBefore = 0
+        slot.ParagraphFormat.SpaceAfter = 0
+    except Exception:
+        pass
+    formula_obj = slot.InlineShapes.AddPicture(
+        FileName=str(emf_path),
+        LinkToFile=False,
+        SaveWithDocument=True,
+    )
+    _set_alt_text(formula_obj, _encode_formula_alt(payload))
+    try:
+        formula_obj.Range.ParagraphFormat.Alignment = WD_ALIGN_PARAGRAPH_CENTER
+    except Exception:
+        pass
+
+
+def _insert_converted_numbered(
+    word: Any,
+    doc: Any,
+    start: int,
+    end: int,
+    payload: dict[str, Any],
+    emf_path: Path,
+    *,
+    include_chapter: bool,
+) -> None:
+    payload = dict(payload)
+    payload["mode"] = "display"
+    payload["display"] = True
+    payload["numbered"] = True
+    payload["numberType"] = "word-seq"
+    payload["sequenceName"] = EQUATION_SEQUENCE_NAME
+    payload["sequenceResetByHeadingLevel"] = 1 if include_chapter else None
+    payload["includeChapterNumber"] = include_chapter
+
+    slot = _prepare_block_insertion_range(doc, doc.Range(start, end))
+    table = doc.Tables.Add(Range=slot, NumRows=1, NumColumns=3)
+    _format_equation_table(table)
+
+    left_rng = _cell_content_range(table.Cell(1, 1))
+    center_rng = _cell_content_range(table.Cell(1, 2))
+    try:
+        left_rng.Text = ""
+    except Exception:
+        pass
+    try:
+        center_rng.ParagraphFormat.Alignment = WD_ALIGN_PARAGRAPH_CENTER
+    except Exception:
+        pass
+
+    formula_obj = center_rng.InlineShapes.AddPicture(
+        FileName=str(emf_path),
+        LinkToFile=False,
+        SaveWithDocument=True,
+    )
+    _set_alt_text(formula_obj, _encode_formula_alt(payload))
+    _insert_equation_number_fields(word, table.Cell(1, 3), include_chapter=include_chapter)
+
+
+def convert_word_markers(request: dict[str, Any]) -> dict[str, Any]:
+    """把前端已渲染的多个公式按 Word 绝对范围逆序原位替换。"""
+    raw_items = request.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        return {"ok": True, "message": "没有待转换公式，Word 内容未修改。", "converted": 0}
+
+    word = _word_app()
+    doc = word.ActiveDocument
+    expected_document = str(request.get("documentIdentity") or "")
+    if expected_document and _document_identity(doc) != expected_document:
+        raise WordFormulaError("当前活动 Word 文档已变化，已取消转换，文档未修改。")
+
+    validated: list[tuple[int, int, dict[str, Any], str]] = []
+    seen_ranges: set[tuple[int, int]] = set()
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            raise WordFormulaError("转换请求中的公式项目格式无效。")
+        start, end, payload, formula_type = _validate_conversion_item(doc, raw_item)
+        key = (start, end)
+        if key in seen_ranges:
+            raise WordFormulaError("转换请求中存在重复公式范围。")
+        seen_ranges.add(key)
+        validated.append((start, end, payload, formula_type))
+
+    validated.sort(key=lambda value: value[0], reverse=True)
+    for idx in range(len(validated) - 1):
+        current_start, _current_end, _current_payload, _current_type = validated[idx]
+        _next_start, next_end, _next_payload, _next_type = validated[idx + 1]
+        if next_end > current_start:
+            raise WordFormulaError("待转换公式范围发生重叠，已取消转换。")
+
+    # 先完成全部 SVG→EMF 转换，再修改 Word，避免中途转换失败造成部分替换。
+    prepared: list[tuple[int, int, dict[str, Any], str, Path]] = []
+    temp_paths: list[Path] = []
+    batch_tag = f"convert_{time.time_ns()}"
+    try:
+        for index, (start, end, payload, formula_type) in enumerate(validated, start=1):
+            json_path, svg_path, emf_path = _save_formula_files(payload, stem=f"{batch_tag}_{index}")
+            temp_paths.extend((json_path, svg_path, emf_path))
+            prepared.append((start, end, payload, formula_type, emf_path))
+    except Exception as exc:
+        for path in temp_paths:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        raise WordFormulaError(f"批量生成公式 EMF 失败，Word 内容未修改：{exc}") from exc
+
+    undo_started = False
+    try:
+        try:
+            word.UndoRecord.StartCustomRecord("转换 LaTeX 定界符公式")
+            undo_started = True
+        except Exception:
+            undo_started = False
+
+        counts = {"inline": 0, "display": 0, "numbered": 0, "chapter-numbered": 0}
+        for start, end, payload, formula_type, emf_path in prepared:
+            if formula_type == "inline":
+                _insert_converted_inline(doc, start, end, payload, emf_path)
+            elif formula_type == "display":
+                _insert_converted_display(doc, start, end, payload, emf_path)
+            elif formula_type == "numbered":
+                _insert_converted_numbered(word, doc, start, end, payload, emf_path, include_chapter=False)
+            elif formula_type == "chapter-numbered":
+                _insert_converted_numbered(word, doc, start, end, payload, emf_path, include_chapter=True)
+            else:
+                raise WordFormulaError(f"不支持的公式定界符类型：{formula_type}")
+            counts[formula_type] += 1
+
+        if counts["numbered"] or counts["chapter-numbered"]:
+            try:
+                doc.Fields.Update()
+            except Exception:
+                pass
+
+        detail_parts = []
+        labels = (("inline", "行内"), ("display", "行间"), ("numbered", "编号"), ("chapter-numbered", "章节编号"))
+        for key, label in labels:
+            if counts[key]:
+                detail_parts.append(f"{label} {counts[key]} 个")
+        detail = "、".join(detail_parts)
+        return {
+            "ok": True,
+            "message": f"已转换 {len(validated)} 个公式（{detail}）。",
+            "converted": len(validated),
+            "counts": counts,
+        }
+    except Exception as exc:
+        # 支持 UndoRecord 的 Word 版本中，尽量把本次批量操作整体回滚。
+        if undo_started:
+            try:
+                word.UndoRecord.EndCustomRecord()
+                undo_started = False
+                word.Undo()
+            except Exception:
+                pass
+        raise WordFormulaError(f"转换 Word 中的 LaTeX 定界符失败：{exc}") from exc
+    finally:
+        if undo_started:
+            try:
+                word.UndoRecord.EndCustomRecord()
+            except Exception:
+                pass
+        for path in temp_paths:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+
+def _formula_marker_from_payload(data: dict[str, Any]) -> tuple[str, str]:
+    latex = str(data.get("latex") or "")
+    if not latex.strip():
+        raise WordFormulaError("选中的公式缺少 LaTeX 源码，无法回写。")
+
+    if bool(data.get("numbered")):
+        if bool(data.get("includeChapterNumber")):
+            return f"##{latex}##", "chapter-numbered"
+        return f"#{latex}#", "numbered"
+
+    mode = str(data.get("mode") or "").lower()
+    if mode not in ("inline", "display"):
+        mode = "display" if bool(data.get("display")) else "inline"
+    if mode == "display":
+        return f"$${latex}$$", "display"
+    return f"${latex}$", "inline"
+
+
+def _object_range_bounds(obj: Any, *, floating: bool = False) -> tuple[int, int]:
+    try:
+        rng = obj.Anchor if floating else obj.Range
+        return int(rng.Start), int(rng.End)
+    except Exception as exc:
+        raise WordFormulaError("无法读取选中公式在 Word 中的位置。") from exc
+
+
+def _numbered_formula_table(obj: Any) -> Any:
+    try:
+        rng = obj.Range
+        if int(rng.Tables.Count) < 1:
+            raise WordFormulaError("编号公式不在表格中，不能安全删除编号布局。")
+        table = rng.Tables.Item(1)
+        if int(table.Rows.Count) != 1 or int(table.Columns.Count) != 3:
+            raise WordFormulaError("编号公式所在表格不是一行三列结构，已取消回写以避免误删普通表格。")
+        return table
+    except WordFormulaError:
+        raise
+    except Exception as exc:
+        raise WordFormulaError("无法确认编号公式的一行三列表格结构，已取消回写。") from exc
+
+
+def _selection_direct_formula_ranges(selection: Any) -> set[tuple[int, int, str]]:
+    """记录 Word 明确选中的图片，补充普通范围判断覆盖不到的对象选择状态。"""
+    selected: set[tuple[int, int, str]] = set()
+    try:
+        for index in range(1, int(selection.InlineShapes.Count) + 1):
+            obj = selection.InlineShapes.Item(index)
+            start, end = _object_range_bounds(obj)
+            selected.add((start, end, "inline"))
+    except Exception:
+        pass
+    try:
+        for index in range(1, int(selection.ShapeRange.Count) + 1):
+            obj = selection.ShapeRange.Item(index)
+            start, end = _object_range_bounds(obj, floating=True)
+            selected.add((start, end, "shape"))
+    except Exception:
+        pass
+    return selected
+
+
+def _collect_selected_formula_writebacks(doc: Any, selection: Any) -> list[dict[str, Any]]:
+    selection_start = int(selection.Range.Start)
+    selection_end = int(selection.Range.End)
+    selection_empty = selection_start == selection_end
+    direct_ranges = _selection_direct_formula_ranges(selection)
+    candidates: list[tuple[str, Any, bool]] = []
+
+    try:
+        for index in range(1, int(doc.InlineShapes.Count) + 1):
+            candidates.append(("inline", doc.InlineShapes.Item(index), False))
+    except Exception:
+        pass
+    try:
+        for index in range(1, int(doc.Shapes.Count) + 1):
+            candidates.append(("shape", doc.Shapes.Item(index), True))
+    except Exception:
+        pass
+
+    targets: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, int]] = set()
+    for kind, obj, floating in candidates:
+        alt_text = _get_alt_text(obj)
+        if not is_formula_payload(alt_text):
+            continue
+        try:
+            data = decode_payload(alt_text)
+        except Exception:
+            continue
+        if not isinstance(data, dict) or not str(data.get("latex") or "").strip():
+            continue
+
+        obj_start, obj_end = _object_range_bounds(obj, floating=floating)
+        explicitly_selected = (obj_start, obj_end, kind) in direct_ranges
+        if selection_empty:
+            selected = explicitly_selected or obj_start <= selection_start <= obj_end
+            if not selected and bool(data.get("numbered")):
+                try:
+                    table_range = _numbered_formula_table(obj).Range
+                    selected = int(table_range.Start) <= selection_start <= int(table_range.End)
+                except Exception:
+                    selected = False
+        else:
+            selected = explicitly_selected or (obj_start >= selection_start and obj_end <= selection_end)
+        if not selected:
+            continue
+
+        marker_text, formula_type = _formula_marker_from_payload(data)
+        if bool(data.get("numbered")):
+            table = _numbered_formula_table(obj)
+            table_start = int(table.Range.Start)
+            table_end = int(table.Range.End)
+            key = ("table", table_start, table_end)
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append({
+                "kind": "table",
+                "object": table,
+                "start": table_start,
+                "end": table_end,
+                "markerText": marker_text,
+                "formulaType": formula_type,
+            })
+        else:
+            key = (kind, obj_start, obj_end)
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append({
+                "kind": kind,
+                "object": obj,
+                "start": obj_start,
+                "end": obj_end,
+                "markerText": marker_text,
+                "formulaType": formula_type,
+            })
+
+    targets.sort(key=lambda item: int(item["start"]), reverse=True)
+    for index in range(len(targets) - 1):
+        current = targets[index]
+        following = targets[index + 1]
+        if int(following["end"]) > int(current["start"]):
+            raise WordFormulaError("选中的公式范围发生重叠，已取消回写。")
+    return targets
+
+
+def _replace_formula_with_marker(doc: Any, target: dict[str, Any]) -> None:
+    start = int(target["start"])
+    end = int(target["end"])
+    marker_text = str(target["markerText"])
+    formula_type = str(target["formulaType"])
+    kind = str(target["kind"])
+
+    if kind == "table":
+        table = target["object"]
+        try:
+            table.Delete()
+        except Exception as exc:
+            raise WordFormulaError("删除编号公式的一行三列表格失败。") from exc
+        insertion = doc.Range(start, start)
+        insertion.Text = marker_text
+        try:
+            doc.Range(start, start + _utf16_length(marker_text)).ParagraphFormat.Alignment = WD_ALIGN_PARAGRAPH_LEFT
+        except Exception:
+            pass
+        return
+
+    if kind == "inline":
+        try:
+            doc.Range(start, end).Text = marker_text
+        except Exception as exc:
+            raise WordFormulaError("把公式图片替换为 LaTeX 编码失败。") from exc
+    else:
+        try:
+            target["object"].Delete()
+            doc.Range(start, start).Text = marker_text
+        except Exception as exc:
+            raise WordFormulaError("把浮动公式图片替换为 LaTeX 编码失败。") from exc
+
+    if formula_type == "display":
+        try:
+            doc.Range(start, start + _utf16_length(marker_text)).ParagraphFormat.Alignment = WD_ALIGN_PARAGRAPH_LEFT
+        except Exception:
+            pass
+
+
+def writeback_selected_formulas() -> dict[str, Any]:
+    """把 Word 当前选中的一个或多个公式图片批量回写为对应 LaTeX 定界符文本。"""
+    word = _word_app()
+    doc = word.ActiveDocument
+    selection = word.Selection
+    targets = _collect_selected_formula_writebacks(doc, selection)
+    if not targets:
+        return {
+            "ok": True,
+            "message": "当前选区中没有由本工具插入的可回写公式，Word 内容未修改。",
+            "writtenBack": 0,
+        }
+
+    undo_started = False
+    try:
+        try:
+            word.UndoRecord.StartCustomRecord("公式回写为 LaTeX 编码")
+            undo_started = True
+        except Exception:
+            undo_started = False
+
+        counts = {"inline": 0, "display": 0, "numbered": 0, "chapter-numbered": 0}
+        for target in targets:
+            _replace_formula_with_marker(doc, target)
+            counts[str(target["formulaType"])] += 1
+
+        first_start = min(int(item["start"]) for item in targets)
+        try:
+            doc.Range(first_start, first_start).Select()
+        except Exception:
+            pass
+
+        details = []
+        labels = (("inline", "行内"), ("display", "行间"), ("numbered", "编号"), ("chapter-numbered", "章节编号"))
+        for key, label in labels:
+            if counts[key]:
+                details.append(f"{label} {counts[key]} 个")
+        return {
+            "ok": True,
+            "message": f"已回写 {len(targets)} 个公式（{'、'.join(details)}）。",
+            "writtenBack": len(targets),
+            "counts": counts,
+        }
+    except Exception as exc:
+        if undo_started:
+            try:
+                word.UndoRecord.EndCustomRecord()
+                undo_started = False
+                word.Undo()
+            except Exception:
+                pass
+        if isinstance(exc, WordFormulaError):
+            raise
+        raise WordFormulaError(f"批量回写公式失败：{exc}") from exc
+    finally:
+        if undo_started:
+            try:
+                word.UndoRecord.EndCustomRecord()
+            except Exception:
+                pass
 
 def check_environment() -> dict[str, Any]:
     """返回 Word/pywin32/Inkscape 环境状态，用于页面诊断。"""

@@ -1,3 +1,10 @@
 @echo off
-cd /d %~dp0
-wscript.exe "%~dp0start_mini_window_silent.vbs"
+setlocal
+cd /d "%~dp0"
+where pythonw.exe >nul 2>nul
+if %errorlevel%==0 (
+  start "" /b pythonw.exe "%~dp0start_mini_window.py"
+) else (
+  python "%~dp0start_mini_window.py"
+)
+endlocal

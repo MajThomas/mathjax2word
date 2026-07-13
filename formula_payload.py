@@ -30,72 +30,56 @@ def _b64_decode(text: str) -> str:
 
 
 def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """统一 Word/WPS 可编辑公式 payload 字段。"""
+    """
+    统一并精简 Word/WPS 可编辑公式 payload。
+
+    AlternativeText 只保存重建公式需要的信息，不保存 SVG/EMF、渲染平台、
+    字体显示名称或编号域的冗余数据。
+    """
     data = dict(payload or {})
     latex = str(data.get("latex") or data.get("tex") or "")
-    mode = str(data.get("mode") or ("display" if data.get("display") else "inline"))
+    mode = str(data.get("mode") or ("display" if data.get("display") else "inline")).lower()
     if mode not in {"inline", "display"}:
-        mode = "display" if str(mode).lower() in {"1", "true", "yes"} else "inline"
+        mode = "display" if mode in {"1", "true", "yes"} else "inline"
+
     font_size = data.get("fontSize", data.get("font_size", data.get("font-size", 12)))
     try:
         font_size = float(font_size)
     except Exception:
         font_size = 12.0
     font_size = min(96.0, max(6.0, font_size))
+    if font_size.is_integer():
+        font_size = int(font_size)
 
-    color = str(data.get("color") or "#000000").strip()
+    color = str(data.get("color") or "#000000").strip().upper()
     if not (len(color) == 7 and color.startswith("#")):
         color = "#000000"
-
-    svg_text = data.get("svgText")
-    if not isinstance(svg_text, str) or not svg_text.strip():
-        svg_text = data.get("svg")
 
     normalized: dict[str, Any] = {
         "type": TYPE_NAME,
         "version": VERSION,
         "latex": latex,
-        "display": mode == "display",
         "mode": mode,
         "fontSize": font_size,
         "mathFont": str(data.get("mathFont") or data.get("math_font") or "mathjax-newcm"),
-        "mathFontLabel": str(data.get("mathFontLabel") or data.get("math_font_label") or ""),
-        "color": color.upper(),
-        "renderer": str(data.get("renderer") or "mathjax-svg"),
-        "displayImageFormat": str(data.get("displayImageFormat") or data.get("imageFormat") or "emf"),
-        "platform": str(data.get("platform") or "word-routeB"),
+        "color": color,
     }
 
-    passthrough_keys = (
-        "numbered",
-        "numberType",
-        "sequenceName",
-        "sequenceResetByHeadingLevel",
-        "includeChapterNumber",
-        "chapterNumber",
-        "equationIndex",
-        "sequenceNumber",
-        "equationLabel",
-    )
-    for key in passthrough_keys:
-        if key in data:
-            normalized[key] = data[key]
+    if bool(data.get("numbered")):
+        normalized["numbered"] = True
+        normalized["includeChapterNumber"] = bool(data.get("includeChapterNumber"))
 
-    if isinstance(svg_text, str) and svg_text.strip():
-        normalized["svgText"] = svg_text
     return normalized
 
 
 def encode_payload(payload: dict[str, Any], *, max_svg_chars: int = 120_000) -> str:
-    """把公式 JSON 编码成 Word/WPS 通用 AlternativeText 字符串。"""
-    data = normalize_payload(payload)
-    svg_text = data.get("svgText")
-    if isinstance(svg_text, str) and len(svg_text) > max_svg_chars:
-        # AlternativeText 不适合塞超大 SVG；LaTeX 和配置才是主数据。
-        data.pop("svgText", None)
-        data["svgOmitted"] = True
-        data["svgOriginalChars"] = len(svg_text)
+    """
+    把精简公式 JSON 编码成 AlternativeText。
 
+    max_svg_chars 参数仅为兼容旧调用；新格式始终不写入 SVG 图片数据。
+    """
+    del max_svg_chars
+    data = normalize_payload(payload)
     raw = json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=_json_default)
     return PREFIX + _b64_encode(raw)
 
@@ -124,13 +108,14 @@ def _decode_legacy_payload(text: str) -> dict[str, Any]:
 
 
 def decode_payload(text: str | None) -> dict[str, Any]:
-    """从 AlternativeText 字符串恢复公式 JSON。兼容新旧两种格式。"""
+    """从 AlternativeText 恢复公式 JSON，兼容新旧两种格式。"""
     if not text or not isinstance(text, str):
         raise FormulaPayloadError("选中对象没有保存公式数据。")
     if text.startswith(PREFIX):
         return _decode_new_payload(text)
     if text.startswith(LEGACY_PREFIX):
         return _decode_legacy_payload(text)
+
     # 如果 payload 混在 Title/HTML 中，也尝试查找前缀。
     idx = text.find(PREFIX)
     if idx >= 0:
