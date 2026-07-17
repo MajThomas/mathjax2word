@@ -1,2 +1,2 @@
-pywin32; platform_system == "Windows"
-pywebview; platform_system == "Windows"
+pywin32>=306
+pywebview>=5.0

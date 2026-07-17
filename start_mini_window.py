@@ -14,8 +14,8 @@ ROOT = Path(__file__).resolve().parent
 PORT = int(os.environ.get("LATEX_SVG_PORT", "8000"))
 HOST = "127.0.0.1"
 URL = f"http://localhost:{PORT}/latex-svg-clipboard.html?mini=1"
-MINI_WIDTH = int(os.environ.get("LATEX_SVG_MINI_WIDTH", "1240"))
-MINI_COLLAPSED_WIDTH = int(os.environ.get("LATEX_SVG_MINI_COLLAPSED_WIDTH", "650"))
+MINI_WIDTH = int(os.environ.get("LATEX_SVG_MINI_WIDTH", "1295"))
+MINI_COLLAPSED_WIDTH = int(os.environ.get("LATEX_SVG_MINI_COLLAPSED_WIDTH", "730"))
 MINI_HEIGHT = int(os.environ.get("LATEX_SVG_MINI_HEIGHT", "40"))
 LOG_FILE = ROOT / "mini_window.log"
 SINGLE_INSTANCE_MUTEX_NAME = r"Local\LatexSvgClipboardMiniWindow"

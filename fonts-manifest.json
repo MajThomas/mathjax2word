@@ -1,7 +1,157 @@
-[
-  {
-    "id": "mathjax-newcm",
-    "label": "MathJax New Computer Modern（内置）",
-    "builtin": true
-  }
-]
+{
+  "description": "所有字体均使用网页原始加载逻辑：由 local-fonts.js 注入配置，MathJax 从本地 vendor/fonts/%%FONT%%-font 按需加载。NewCM 和 STIX2 标记为已校准，其余字体暂用同一基线曲线并标记未校准。",
+  "fonts": [
+    {
+      "id": "mathjax-newcm",
+      "label": "New Computer Modern",
+      "builtin": false,
+      "calibrated": true,
+      "calibrationStatus": "calibrated",
+      "inlineBaselineOffsetCurvePt": {
+        "10.5": 3.3,
+        "12": 4.1,
+        "18": 6.5,
+        "24": 8.5
+      }
+    },
+    {
+      "id": "mathjax-stix2",
+      "label": "STIX Two Math（Times风格）",
+      "builtin": false,
+      "calibrated": true,
+      "calibrationStatus": "calibrated",
+      "inlineBaselineOffsetCurvePt": {
+        "10.5": 3.6,
+        "12": 4.5,
+        "18": 6.8,
+        "24": 9.2
+      }
+    },
+    {
+      "id": "mathjax-asana",
+      "label": "Asana Math",
+      "builtin": false,
+      "calibrated": false,
+      "calibrationStatus": "uncalibrated",
+      "inlineBaselineOffsetCurvePt": {
+        "10.5": 3.5,
+        "12": 4.2,
+        "18": 6.5,
+        "24": 8.5
+      },
+      "note": "未校准，当前暂用 NewCM 基线偏移曲线。"
+    },
+    {
+      "id": "mathjax-bonum",
+      "label": "TeX Gyre Bonum",
+      "builtin": false,
+      "calibrated": false,
+      "calibrationStatus": "uncalibrated",
+      "inlineBaselineOffsetCurvePt": {
+        "10.5": 3.5,
+        "12": 4.2,
+        "18": 6.5,
+        "24": 8.5
+      },
+      "note": "未校准，当前暂用 NewCM 基线偏移曲线。"
+    },
+    {
+      "id": "mathjax-dejavu",
+      "label": "TeX Gyre DejaVu",
+      "builtin": false,
+      "calibrated": false,
+      "calibrationStatus": "uncalibrated",
+      "inlineBaselineOffsetCurvePt": {
+        "10.5": 3.5,
+        "12": 4.2,
+        "18": 6.5,
+        "24": 8.5
+      },
+      "note": "未校准，当前暂用 NewCM 基线偏移曲线。"
+    },
+    {
+      "id": "mathjax-fira",
+      "label": "Fira Math（无衬线）",
+      "builtin": false,
+      "calibrated": false,
+      "calibrationStatus": "uncalibrated",
+      "inlineBaselineOffsetCurvePt": {
+        "10.5": 3.5,
+        "12": 4.2,
+        "18": 6.5,
+        "24": 8.5
+      },
+      "note": "未校准，当前暂用 NewCM 基线偏移曲线。"
+    },
+    {
+      "id": "mathjax-modern",
+      "label": "Latin Modern Math",
+      "builtin": false,
+      "calibrated": false,
+      "calibrationStatus": "uncalibrated",
+      "inlineBaselineOffsetCurvePt": {
+        "10.5": 3.5,
+        "12": 4.2,
+        "18": 6.5,
+        "24": 8.5
+      },
+      "note": "未校准，当前暂用 NewCM 基线偏移曲线。"
+    },
+    {
+      "id": "mathjax-pagella",
+      "label": "TeX Gyre Pagella",
+      "builtin": false,
+      "calibrated": false,
+      "calibrationStatus": "uncalibrated",
+      "inlineBaselineOffsetCurvePt": {
+        "10.5": 3.5,
+        "12": 4.2,
+        "18": 6.5,
+        "24": 8.5
+      },
+      "note": "未校准，当前暂用 NewCM 基线偏移曲线。"
+    },
+    {
+      "id": "mathjax-schola",
+      "label": "TeX Gyre Schola",
+      "builtin": false,
+      "calibrated": false,
+      "calibrationStatus": "uncalibrated",
+      "inlineBaselineOffsetCurvePt": {
+        "10.5": 3.5,
+        "12": 4.2,
+        "18": 6.5,
+        "24": 8.5
+      },
+      "note": "未校准，当前暂用 NewCM 基线偏移曲线。"
+    },
+    {
+      "id": "mathjax-termes",
+      "label": "TeX Gyre Termes（Times风格）",
+      "builtin": false,
+      "calibrated": false,
+      "calibrationStatus": "uncalibrated",
+      "inlineBaselineOffsetCurvePt": {
+        "10.5": 3.5,
+        "12": 4.2,
+        "18": 6.5,
+        "24": 8.5
+      },
+      "note": "未校准，当前暂用 NewCM 基线偏移曲线。"
+    },
+    {
+      "id": "mathjax-tex",
+      "label": "MathJax TeX（经典）",
+      "builtin": false,
+      "calibrated": false,
+      "calibrationStatus": "uncalibrated",
+      "inlineBaselineOffsetCurvePt": {
+        "10.5": 3.5,
+        "12": 4.2,
+        "18": 6.5,
+        "24": 8.5
+      },
+      "note": "未校准，当前暂用 NewCM 基线偏移曲线。"
+    }
+  ]
+}

@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LaTeX → SVG/EMF → Word，本地版</title>
+  <meta name="latex-svg-build" content="2026-07-17-v37-mini-controls-70-80" />
 
   <!--
     local-fonts.js 由 run_local_server.py 动态生成；如果直接用普通静态服务器，
@@ -20,7 +21,19 @@
 
       const availableFonts = Array.isArray(window.LATEX_SVG_FONTS) && window.LATEX_SVG_FONTS.length
         ? window.LATEX_SVG_FONTS
-        : [{ id: "mathjax-newcm", label: "MathJax New Computer Modern", builtin: true }];
+        : [{
+            id: "mathjax-newcm",
+            label: "New Computer Modern",
+            builtin: false,
+            calibrated: true,
+            calibrationStatus: "calibrated",
+            inlineBaselineOffsetCurvePt: {
+              "10.5": 3.5,
+              "12": 4.2,
+              "18": 6.5,
+              "24": 8.5
+            }
+          }];
 
       function getInitialFont() {
         const params = new URLSearchParams(location.search || "");
@@ -31,10 +44,25 @@
       }
 
       const selectedFont = getInitialFont();
-      const localFontRoot = new URL("./vendor/fonts/", document.baseURI).href.replace(/\/$/, "");
+
+      // 每次字体切换按“本地 → 联网 → 默认字体”顺序尝试。
+      // URL 只有明确指定 online 时才使用联网源，其余情况均从本地开始。
+      const params = new URLSearchParams(location.search || "");
+      const requestedFontSource = params.get("fontSource") === "online"
+        ? "online"
+        : "local";
+      const officialFontRoot = "https://cdn.jsdelivr.net/npm/@mathjax";
+      const localFontRoot = new URL(
+        "./vendor/fonts/",
+        document.baseURI
+      ).href.replace(/\/$/, "");
+      const activeFontRoot = requestedFontSource === "local"
+        ? localFontRoot
+        : officialFontRoot;
 
       window.LATEX_SVG_SELECTED_FONT = selectedFont;
-      window.LATEX_SVG_LOCAL_FONT_ROOT = localFontRoot;
+      window.LATEX_SVG_FONT_SOURCE = requestedFontSource;
+      window.LATEX_SVG_FONT_ROOT = activeFontRoot;
 
       window.MathJax = {
         startup: { typeset: false },
@@ -45,9 +73,7 @@
           processEscapes: true
         },
         loader: {
-          // MathJax 4 会按需加载字体字形数据。把官方字体包根目录明确指向
-          // 本地 vendor/fonts，避免首次渲染时回退到 jsDelivr。
-          paths: { fonts: localFontRoot },
+          paths: { fonts: activeFontRoot },
           load: ["[tex]/ams", "[tex]/noerrors", "[tex]/noundefined"]
         },
         output: {
@@ -195,7 +221,7 @@
     }
     #miniTex {
       flex: 1 1 auto;
-      min-width: 220px;
+      min-width: 150px;
       height: 30px;
       box-sizing: border-box;
       padding: 4px 8px;
@@ -211,9 +237,24 @@
       box-sizing: border-box;
       font-size: 13px;
     }
+    #miniIncludeSectionWrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      height: 30px;
+      min-width: 68px;
+      white-space: nowrap;
+      color: #374151;
+      font-size: 13px;
+    }
+    #miniIncludeSectionNumber {
+      margin: 0;
+    }
     #miniFontSize {
-      min-width: 82px;
-      width: 82px;
+      min-width: 70px;
+      width: 70px;
+      padding: 3px 22px 3px 6px;
+      text-align: left;
     }
     #miniMathFont {
       min-width: 170px;
@@ -228,12 +269,37 @@
     }
     #miniInsertInlineWord { background: var(--accent); }
 
+    #miniInsertDrawer > button {
+      flex: 0 0 auto;
+      position: static;
+    }
+    #miniReadWord,
+    #miniConvertOrWritebackWord,
+    #miniIncludeSectionWrap,
+    #miniFontSize,
+    #miniColorCombo,
+    #miniMathFont,
+    #miniClose,
+    #miniDragRight {
+      position: static;
+      flex-shrink: 0;
+    }
+    #miniReadWord,
+    #miniConvertOrWritebackWord,
+    #miniInsertInlineWord,
+    #miniInsertDisplayWord,
+    #miniInsertNumberedWord,
+    #miniInsertChapterNumberedWord {
+      flex: 0 0 auto;
+    }
+
     #miniInsertDrawer {
       display: flex;
       align-items: center;
       gap: 5px;
-      flex: 1 1 auto;
-      min-width: 0;
+      flex: 1 1 0;
+      min-width: 560px;
+      overflow: hidden;
     }
     body.mini.mini-drawer-collapsed #miniInsertDrawer { display: none; }
     #miniDrawerToggle {
@@ -277,18 +343,69 @@
     body.mini.mini-drag-lock .mini-drag-handle {
       pointer-events: auto !important;
     }
+    .mini-color-combo {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      height: 30px;
+      min-width: 156px;
+      width: 156px;
+      flex: 0 0 156px;
+    }
     #miniColor {
-      width: 76px;
-      min-width: 76px;
-      padding-left: 6px;
-      padding-right: 6px;
+      width: 68px;
+      min-width: 68px;
+      height: 30px;
+      box-sizing: border-box;
+      padding: 4px 4px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #ffffff;
+      color: #111827;
       font-family: Consolas, Monaco, monospace;
+      font-size: 12px;
       text-align: center;
+      text-transform: uppercase;
+      outline: none;
+    }
+    #miniColor:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(37,99,235,.10);
+    }
+    #miniColorPreset {
+      width: 80px;
+      min-width: 80px;
+      height: 30px;
+      box-sizing: border-box;
+      padding: 3px 22px 3px 6px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #ffffff;
+      color: #000000;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    #miniMathFont {
+      flex: 0 0 142px;
+      min-width: 142px;
+      width: 142px;
+      text-overflow: ellipsis;
+    }
+    #miniFontSize,
+    #miniMathFont,
+    #miniColor,
+    #miniColorPreset {
+      flex-shrink: 0;
     }
     #miniClose {
+      flex: 0 0 auto;
       background: #991b1b;
       padding-left: 10px;
       padding-right: 10px;
+    }
+    #miniDragLeft,
+    #miniDragRight {
+      flex: 0 0 24px;
     }
 
   </style>
@@ -296,7 +413,7 @@
 <body>
   <div id="miniLoading" role="status" aria-live="polite" title="初始化中，可拖动窗口">
     <span id="miniLoadingPrefix">[LaTeX 公式工具]</span>
-    <span id="miniLoadingText">正在加载页面与本地资源……</span>
+    <span id="miniLoadingText">正在加载页面与公式字体……</span>
     <span id="miniLoadingCursor">█</span>
   </div>
   <div id="miniBar">
@@ -309,9 +426,13 @@
       <button id="miniInsertNumberedWord" class="secondary">插入编号</button>
       <button id="miniInsertChapterNumberedWord" class="secondary">章节编号</button>
     </div>
+    <label id="miniIncludeSectionWrap" title="勾选后使用“章.节.编号”，未勾选时使用“章.编号”">
+      <input id="miniIncludeSectionNumber" type="checkbox" />
+      含节号
+    </label>
     <button id="miniReadWord" class="ghost">读取</button>
-    <button id="miniConvertWord" class="ghost">转换</button>
-    <button id="miniWritebackWord" class="ghost" title="把选中的公式回写为 LaTeX 定界符文本">回写</button>
+    <button id="miniConvertOrWritebackWord" class="ghost"
+            title="优先转换 LaTeX 定界符；未找到或转换失败时自动回写公式">转换/回写</button>
     <select id="miniFontSize" title="字号">
       <option value="6">6 pt</option>
       <option value="8">8 pt</option>
@@ -327,7 +448,21 @@
       <option value="22">22 pt</option>
       <option value="24">24 pt</option>
     </select>
-    <input id="miniColor" type="text" value="#000000" title="公式颜色，例如 #000000" spellcheck="false" />
+    <div id="miniColorCombo" class="mini-color-combo" title="选择常用颜色，或直接输入十六进制颜色">
+      <input id="miniColor" type="text" value="#000000" title="输入十六进制颜色，例如 #000000" spellcheck="false" maxlength="7" />
+      <select id="miniColorPreset" title="常用公式颜色">
+        <option value="#000000" style="color:#000000" selected>黑色 ■</option>
+        <option value="#D55E00" style="color:#ff0000">红色 ■</option>
+        <option value="#4D4D4D" style="color:#4D4D4D">深灰 ■</option>
+        <option value="#0072B2" style="color:#0072B2">蓝色 ■</option>
+        <option value="#009E73" style="color:#009E73">蓝绿色 ■</option>
+        <option value="#E69F00" style="color:#E69F00">橙色 ■</option>
+        <option value="#CC79A7" style="color:#CC79A7">紫红色 ■</option>
+        <option value="#56B4E9" style="color:#56B4E9">天蓝色 ■</option>
+        <option value="#FFFFFF" style="color:#6B7280">白色 □</option>
+        <option value="" style="color:#475569">自定义 ＋</option>
+      </select>
+    </div>
     <select id="miniMathFont" title="公式字体"></select>
     <button id="miniClose" title="关闭">关闭</button>
     <div id="miniDragRight" class="mini-drag-handle pywebview-drag-region" title="拖动窗口" aria-label="拖动窗口">⋮⋮</div>
@@ -348,8 +483,8 @@
       <button id="insertDisplayWord" class="secondary">插入 Word 行间公式</button>
       <button id="insertNumberedWord">插入 Word 编号公式</button>
       <button class="secondary" id="readWord">读取 Word 选中公式</button>
-      <button class="secondary" id="convertWord">转换</button>
-      <button class="secondary" id="writebackWord">回写为 LaTeX</button>
+      <button class="secondary" id="convertOrWritebackWord"
+              title="优先转换 LaTeX 定界符；未找到或转换失败时自动回写公式">转换/回写</button>
       <button class="secondary" id="updateWord">更新 Word 选中公式</button>
       <label>公式模式
         <select id="formulaMode">
@@ -357,24 +492,32 @@
           <option value="display" selected>行间公式</option>
         </select>
       </label>
-      <label><input id="includeChapterNumber" type="checkbox" /> 编号含一级标题号</label>
+      <label title="未勾选时插入“章.编号”，勾选后插入“章.节.编号”">
+        <input id="includeSectionNumber" type="checkbox" />
+        章节编号含节号
+      </label>
       <label>颜色 <input id="svgColor" type="text" value="#000000" spellcheck="false" placeholder="#000000" style="width:92px;font-family:Consolas,Monaco,monospace;" /></label>
       <label>字号
         <select id="fontSize">
           <option value="6">6 pt</option>
           <option value="8">8 pt</option>
+          <option value="9">9 pt</option>
           <option value="10">10 pt</option>
           <option value="10.5">10.5 pt</option>
           <option value="11">11 pt</option>
           <option value="12" selected>12 pt</option>
           <option value="14">14 pt</option>
+          <option value="15">15 pt</option>
           <option value="16">16 pt</option>
           <option value="18">18 pt</option>
+          <option value="22">22 pt</option>
+          <option value="24">24 pt</option>
         </select>
       </label>
       <label>公式字体
         <select id="mathFont"></select>
       </label>
+      <span class="small">全部字体默认从 MathJax 官方 CDN 加载；联网失败时仅回退一次到本地 vendor/fonts；未校准字体会在名称后标注。</span>
     </div>
 
     <div id="pasteBox" tabindex="0">
@@ -398,6 +541,106 @@
     // 串行化后续转换，因此不再在每次渲染前直接等待或改写 startup.promise。
     let mathJaxReadyPromise = null;
 
+    function promiseWithTimeout(promise, timeoutMs, message) {
+      return Promise.race([
+        promise,
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(message)), timeoutMs);
+        })
+      ]);
+    }
+
+    function currentFontFallbackKey(kind) {
+      const fontId = String(
+        window.LATEX_SVG_SELECTED_FONT ||
+        localStorage.getItem("latexSvgMathFont") ||
+        "unknown"
+      );
+      return `latexSvgFontFallback:${kind}:${fontId}`;
+    }
+
+    function fontFallbackKey(kind, fontId) {
+      return `latexSvgFontFallback:${kind}:${String(fontId || "unknown")}`;
+    }
+
+    function clearFontFallbackState(fontId) {
+      sessionStorage.removeItem(fontFallbackKey("online", fontId));
+      sessionStorage.removeItem(fontFallbackKey("default", fontId));
+    }
+
+    function clearCurrentFontFallbackState() {
+      clearFontFallbackState(
+        window.LATEX_SVG_SELECTED_FONT ||
+        localStorage.getItem("latexSvgMathFont") ||
+        "unknown"
+      );
+    }
+
+    function switchOnceToOnlineFontSource(reason) {
+      if (window.LATEX_SVG_FONT_SOURCE !== "local") return false;
+
+      const fallbackKey = currentFontFallbackKey("online");
+      if (sessionStorage.getItem(fallbackKey) === "1") {
+        return false;
+      }
+
+      sessionStorage.setItem(fallbackKey, "1");
+      const url = new URL(location.href);
+      url.searchParams.set("fontSource", "online");
+      url.searchParams.delete("fontFallbackReason");
+      location.replace(url.href);
+      return true;
+    }
+
+    function isDefiniteLocalFontMissingError(reason) {
+      const message = String(reason || "").toLowerCase();
+
+      // 普通短时超时不直接视为字体缺失；本地源只保留 1.5 秒快速兜底。
+      if (
+        message.includes("timeout") ||
+        message.includes("超时") ||
+        message.includes("timed out")
+      ) {
+        return false;
+      }
+
+      return [
+        "404",
+        "not found",
+        "failed to load",
+        "load failed",
+        "loading failed",
+        "unknown font",
+        "font not found",
+        "cannot find",
+        "找不到",
+        "不存在",
+        "加载失败",
+        "无法加载"
+      ].some(token => message.includes(token));
+    }
+
+    function fallbackToDefaultFont(reason) {
+      const defaultFont =
+        (Array.isArray(window.LATEX_SVG_FONTS) && window.LATEX_SVG_FONTS.length)
+          ? window.LATEX_SVG_FONTS[0].id
+          : "mathjax-newcm";
+
+      if (window.LATEX_SVG_SELECTED_FONT === defaultFont) return false;
+      const fallbackKey = currentFontFallbackKey("default");
+      if (sessionStorage.getItem(fallbackKey) === "1") return false;
+
+      sessionStorage.setItem(fallbackKey, "1");
+      localStorage.setItem("latexSvgMathFont", defaultFont);
+
+      const url = new URL(location.href);
+      url.searchParams.set("mathFont", defaultFont);
+      url.searchParams.set("fontSource", "local");
+      url.searchParams.set("fontFallbackReason", String(reason || "font-load-failed"));
+      location.replace(url.href);
+      return true;
+    }
+
     function ensureMathJaxReady() {
       if (mathJaxReadyPromise) return mathJaxReadyPromise;
 
@@ -414,7 +657,45 @@
         if (!MathJax.startup || !MathJax.startup.promise) {
           throw new Error("MathJax 主程序尚未完成加载，startup.promise 不可用。");
         }
-        await MathJax.startup.promise;
+        try {
+          const usingLocalFontSource =
+            window.LATEX_SVG_FONT_SOURCE === "local";
+
+          // 快速失败策略：
+          // 本地文件缺失通常会立即 reject；无结果最多等待 1.5 秒后联网。
+          // 联网源 1.5 秒无响应后回退默认字体。
+          const startupTimeoutMs = 1500;
+          const startupTimeoutMessage = usingLocalFontSource
+            ? "本地公式字体初始化超时。"
+            : "在线公式字体初始化超时。";
+
+          await promiseWithTimeout(
+            MathJax.startup.promise,
+            startupTimeoutMs,
+            startupTimeoutMessage
+          );
+        } catch (error) {
+          const message = error && error.message
+            ? error.message
+            : String(error);
+
+          if (window.LATEX_SVG_FONT_SOURCE === "local") {
+            // 本地字体文件缺失、加载失败或短时无结果，立即尝试联网字体。
+            if (switchOnceToOnlineFontSource(message)) {
+              return await new Promise(() => {});
+            }
+          }
+
+          if (
+            window.LATEX_SVG_FONT_SOURCE === "online" &&
+            fallbackToDefaultFont(message)
+          ) {
+            // 联网字体也失败后，才回退默认字体；默认字体仍从本地开始。
+            return await new Promise(() => {});
+          }
+
+          throw error;
+        }
 
         if (typeof MathJax.tex2svgPromise !== "function") {
           throw new Error("MathJax 已加载，但 tex2svgPromise 接口不可用。");
@@ -433,6 +714,7 @@
       mode: "latexSvgFormulaMode",
       mathFont: "latexSvgMathFont",
       includeChapterNumber: "latexSvgIncludeChapterNumber",
+      includeSectionNumber: "latexSvgIncludeSectionNumber",
       fontSizeDefault12Migrated: "latexSvgFontSizeDefault12Migrated",
       miniDrawerCollapsed: "latexSvgMiniDrawerCollapsed"
     };
@@ -556,6 +838,42 @@
       return "#000000";
     }
 
+    const MINI_COLOR_PRESETS = [
+      { color: "#000000", label: "黑色" },
+      { color: "#4D4D4D", label: "深灰" },
+      { color: "#FFFFFF", label: "白色" },
+      { color: "#0072B2", label: "蓝色" },
+      { color: "#009E73", label: "蓝绿色" },
+      { color: "#D55E00", label: "朱红色" },
+      { color: "#E69F00", label: "橙色" },
+      { color: "#CC79A7", label: "紫红色" },
+      { color: "#56B4E9", label: "天蓝色" }
+    ];
+
+    function syncMiniColorPreset(value) {
+      const preset = $("miniColorPreset");
+      if (!preset) return;
+      const normalized = sanitizeColor(value || "#000000");
+      const matched = MINI_COLOR_PRESETS.find(item => item.color === normalized);
+      preset.value = matched ? normalized : "";
+
+      // 下拉框收起后的文字也跟随当前颜色。
+      // 白色在白色背景下不可见，因此仅显示时使用中灰；实际公式颜色仍为白色。
+      preset.style.color = normalized === "#FFFFFF" ? "#6B7280" : normalized;
+    }
+
+    function applyMiniColorValue(value, shouldRender = true) {
+      const color = sanitizeColor(value || "#000000");
+      const input = $("miniColor");
+      if (input) input.value = color;
+      syncMiniColorPreset(color);
+      syncMiniToMain();
+      if (shouldRender) {
+        renderToSvgText().then(syncMainToMini).catch(() => {});
+      }
+      return color;
+    }
+
     function sanitizeFontSize(value) {
       const n = Number.parseFloat(value);
       if (!Number.isFinite(n)) return 12;
@@ -565,6 +883,28 @@
     function fmtNumber(value) {
       const rounded = Math.round(value * 1000) / 1000;
       return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/0+$/, "").replace(/\.$/, "");
+    }
+
+    function setFontSizeSelectValue(select, value) {
+      const normalized = fmtNumber(sanitizeFontSize(value));
+      if (!select) return normalized;
+
+      let option = Array.from(select.options || []).find(item => item.value === normalized);
+      if (!option) {
+        option = document.createElement("option");
+        option.value = normalized;
+        option.textContent = normalized + " pt";
+
+        const numericValue = Number.parseFloat(normalized);
+        const before = Array.from(select.options || []).find(item => {
+          const current = Number.parseFloat(item.value);
+          return Number.isFinite(current) && current > numericValue;
+        });
+        if (before) select.insertBefore(option, before);
+        else select.appendChild(option);
+      }
+      select.value = normalized;
+      return normalized;
     }
 
     function cdata(text) {
@@ -587,7 +927,19 @@
     function getAvailableFonts() {
       return Array.isArray(window.LATEX_SVG_FONTS) && window.LATEX_SVG_FONTS.length
         ? window.LATEX_SVG_FONTS
-        : [{ id: "mathjax-newcm", label: "MathJax New Computer Modern", builtin: true }];
+        : [{
+            id: "mathjax-newcm",
+            label: "New Computer Modern",
+            builtin: false,
+            calibrated: true,
+            calibrationStatus: "calibrated",
+            inlineBaselineOffsetCurvePt: {
+              "10.5": 3.5,
+              "12": 4.2,
+              "18": 6.5,
+              "24": 8.5
+            }
+          }];
     }
 
     function getSelectedFont() {
@@ -602,13 +954,112 @@
       return font ? font.label : id;
     }
 
+    function getSelectedFontConfig() {
+      const id = getSelectedFont();
+      return getAvailableFonts().find(font => font.id === id) || { id };
+    }
+
+    function finiteFontNumber(value, fallback = 0) {
+      const number = Number.parseFloat(value);
+      return Number.isFinite(number) ? number : fallback;
+    }
+
+    function normalizeFontOffsetCurve(rawCurve) {
+      // 支持三种写法：
+      // 1. {"10.5": 0.05, "12": 0, "18": 0.10}
+      // 2. [[10.5, 0.05], [12, 0], [18, 0.10]]
+      // 3. [{fontSize: 10.5, offsetPt: 0.05}, ...]
+      const pointMap = new Map();
+      const addPoint = (sizeValue, offsetValue) => {
+        const size = Number.parseFloat(sizeValue);
+        const offsetPt = Number.parseFloat(offsetValue);
+        if (!Number.isFinite(size) || size <= 0 || !Number.isFinite(offsetPt)) return;
+        pointMap.set(size, Math.max(-12, Math.min(12, offsetPt)));
+      };
+
+      if (Array.isArray(rawCurve)) {
+        for (const item of rawCurve) {
+          if (Array.isArray(item) && item.length >= 2) {
+            addPoint(item[0], item[1]);
+            continue;
+          }
+          if (item && typeof item === "object") {
+            addPoint(
+              item.fontSize ?? item.size ?? item.fontSizePt ?? item.pt,
+              item.offsetPt ?? item.offset ?? item.baselineOffsetPt
+            );
+          }
+        }
+      } else if (rawCurve && typeof rawCurve === "object") {
+        for (const [size, offsetPt] of Object.entries(rawCurve)) addPoint(size, offsetPt);
+      }
+
+      return Array.from(pointMap, ([fontSize, offsetPt]) => ({ fontSize, offsetPt }))
+        .sort((a, b) => a.fontSize - b.fontSize);
+    }
+
+    function interpolateFontOffsetCurvePt(rawCurve, fontSize) {
+      const points = normalizeFontOffsetCurve(rawCurve);
+      if (!points.length) return 0;
+      if (points.length === 1) return points[0].offsetPt;
+
+      const size = Math.max(0.01, finiteFontNumber(fontSize, 12));
+      // 区间外采用最近端点，避免大字号时无限外推。
+      if (size <= points[0].fontSize) return points[0].offsetPt;
+      if (size >= points[points.length - 1].fontSize) return points[points.length - 1].offsetPt;
+
+      for (let i = 1; i < points.length; i += 1) {
+        const right = points[i];
+        if (size > right.fontSize) continue;
+        const left = points[i - 1];
+        const span = right.fontSize - left.fontSize;
+        if (!(span > 0)) return right.offsetPt;
+        const ratio = (size - left.fontSize) / span;
+        return left.offsetPt + (right.offsetPt - left.offsetPt) * ratio;
+      }
+      return 0;
+    }
+
+    function getSelectedFontInlineOffsetPt(fontSize) {
+      const font = getSelectedFontConfig();
+      const safeFontSize = Math.max(0.01, finiteFontNumber(fontSize, 12));
+      const curve =
+        font.inlineBaselineOffsetCurvePt ??
+        font.inlineBaselineOffsetsPt ??
+        font.baselineOffsetCurvePt;
+      const points = normalizeFontOffsetCurve(curve);
+      let valuePt = 0;
+      if (points.length) {
+        valuePt = interpolateFontOffsetCurvePt(points, safeFontSize);
+      } else {
+        valuePt = finiteFontNumber(
+          font.inlineBaselineOffsetPt ?? font.baselineOffsetPt,
+          0
+        );
+        valuePt += finiteFontNumber(
+          font.inlineBaselineOffsetEm ?? font.baselineOffsetEm,
+          0
+        ) * safeFontSize;
+      }
+      // 正值表示公式最终相对正文向下。
+      return Math.max(-24, Math.min(24, finiteFontNumber(valuePt, 0)));
+    }
+
     function fillFontSelect(select, fonts, selected) {
       if (!select) return;
       select.replaceChildren();
       for (const font of fonts) {
         const option = document.createElement("option");
         option.value = font.id;
-        option.textContent = font.label || font.id;
+        const calibrated =
+          font.calibrated === true ||
+          font.calibrationStatus === "calibrated";
+        option.textContent =
+          (font.label || font.id) +
+          (calibrated ? "" : "（未校准）");
+        option.title = calibrated
+          ? "已完成 Word 基线校准"
+          : "未完成 Word 基线校准，当前使用临时偏移曲线";
         if (font.id === selected) option.selected = true;
         select.appendChild(option);
       }
@@ -627,7 +1078,12 @@
       localStorage.setItem(STORAGE_KEYS.fontSize, $("fontSize").value);
       localStorage.setItem(STORAGE_KEYS.mode, $("formulaMode").value);
       localStorage.setItem(STORAGE_KEYS.mathFont, getSelectedFont());
-      if ($("includeChapterNumber")) localStorage.setItem(STORAGE_KEYS.includeChapterNumber, $("includeChapterNumber").checked ? "1" : "0");
+      if ($("includeSectionNumber")) {
+        localStorage.setItem(
+          STORAGE_KEYS.includeSectionNumber,
+          $("includeSectionNumber").checked ? "1" : "0"
+        );
+      }
     }
 
     function restoreState() {
@@ -637,6 +1093,8 @@
       const modeFromUrl = params.get("mode") || params.get("display");
       const fontSizeFromUrl = params.get("fontSize") || params.get("font-size");
       const chapterFromUrl = params.get("chapter") || params.get("includeChapterNumber");
+      const includeSectionFromUrl =
+        params.get("includeSectionNumber") || params.get("include-section-number");
 
       const tex = texFromUrl ?? localStorage.getItem(STORAGE_KEYS.tex);
       const color = colorFromUrl ?? localStorage.getItem(STORAGE_KEYS.color);
@@ -648,15 +1106,19 @@
       }
       const mode = modeFromUrl ?? localStorage.getItem(STORAGE_KEYS.mode);
       const includeChapterNumber = chapterFromUrl ?? localStorage.getItem(STORAGE_KEYS.includeChapterNumber);
+      const storedIncludeSection =
+        includeSectionFromUrl ??
+        localStorage.getItem(STORAGE_KEYS.includeSectionNumber);
 
       if (tex !== null) $("tex").value = tex;
       if (color && /^#[0-9a-fA-F]{6}$/.test(color)) $("svgColor").value = color;
-      if (fontSize !== null) $("fontSize").value = fmtNumber(sanitizeFontSize(fontSize));
+      if (fontSize !== null) setFontSizeSelectValue($("fontSize"), fontSize);
       if (mode !== null) {
         $("formulaMode").value = /^(1|true|yes|display)$/i.test(mode) ? "display" : "inline";
       }
-      if (includeChapterNumber !== null && $("includeChapterNumber")) {
-        $("includeChapterNumber").checked = /^(1|true|yes|on)$/i.test(includeChapterNumber);
+      if ($("includeSectionNumber")) {
+        $("includeSectionNumber").checked =
+          /^(1|true|yes|on)$/i.test(String(storedIncludeSection || ""));
       }
     }
 
@@ -679,7 +1141,188 @@
       return svgText.replace(/(<svg\b[^>]*>)/i, "$1" + metadataText);
     }
 
-    function applyVisualSettingsToSvg(svg, color, fontSize, mode, mathFont) {
+    // ========================================================================
+    // 紧凑 SVG 直接转 EMF + Word 原生图片裁剪
+    // ========================================================================
+    // SVG 页面保持 MathJax 原始 viewBox，不再扩展为固定大画布，也不再经过 GDI。
+    // Inkscape 直接导出页面 EMF。Word 插入后根据这里记录的几何量，使用
+    // PictureFormat.CropLeft/Right/Top/Bottom 裁掉 SVG 自身空白和 EMF 页框增量。
+    const WORD_CROP_HORIZONTAL_SAFETY_PT = 0.06;
+    const WORD_CROP_VERTICAL_GLYPH_SAFETY_PT = 0.12;
+    // Word 的 Font.Position 以 0.5 pt 为稳定步长；微调残差理论上不超过 0.25 pt。
+    // 额外预留 0.30 pt，避免 CropTop/CropBottom 平移窗口时切到字形边缘。
+    const WORD_CROP_VERTICAL_SHIFT_RESERVE_PT = 0.30;
+    const WORD_CROP_VERTICAL_RETAIN_PT =
+      WORD_CROP_VERTICAL_GLYPH_SAFETY_PT + WORD_CROP_VERTICAL_SHIFT_RESERVE_PT;
+    const DIRECT_EMF_BASELINE_METHOD = "direct-emf-word-picture-crop-precision-safe-v3";
+
+    function parseSvgViewBox(svg) {
+      const parts = String(svg.getAttribute("viewBox") || "")
+        .trim().split(/[\s,]+/).map(Number);
+      if (parts.length !== 4 || !parts.every(Number.isFinite) || parts[2] <= 0 || parts[3] <= 0) {
+        throw new Error("MathJax SVG 的 viewBox 无效。");
+      }
+      return { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+    }
+
+    function measureSvgContentBounds(svg) {
+      // 根 SVG 的 getBBox() 返回全部实际绘制图元的联合边界，不包含 viewBox
+      // 中未绘制的逻辑空白。临时挂载到屏幕外，避免 WebView2 对脱离 DOM 的
+      // SVG 返回零尺寸。这里不逐个测量 <use>，避免嵌套变换重复累计。
+      const host = document.createElement("div");
+      host.style.position = "fixed";
+      host.style.left = "-100000px";
+      host.style.top = "-100000px";
+      host.style.opacity = "0";
+      host.style.pointerEvents = "none";
+      host.style.width = "max-content";
+      host.style.height = "max-content";
+      host.style.overflow = "visible";
+      try {
+        host.appendChild(svg);
+        document.body.appendChild(host);
+        const box = svg.getBBox();
+        if (!box || ![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width <= 0 || box.height <= 0) {
+          return null;
+        }
+        return {
+          left: box.x,
+          top: box.y,
+          right: box.x + box.width,
+          bottom: box.y + box.height,
+          width: box.width,
+          height: box.height
+        };
+      } catch (_) {
+        return null;
+      } finally {
+        try { host.remove(); } catch (_) {}
+      }
+    }
+
+    function configureDirectEmfSvg(svg, fontSize, mode) {
+      const safeFontSize = Math.max(0.01, finiteFontNumber(fontSize, 12));
+      const vb = parseSvgViewBox(svg);
+      const bbox = measureSvgContentBounds(svg);
+      if (!bbox) throw new Error("无法测量 MathJax SVG 的可见图元边界。");
+
+      // MathJax SVG 使用 1000 units/em。沿用此前已验证的字号换算：
+      // 1000 SVG units 对应所选字号 safeFontSize pt。
+      const unitPt = safeFontSize / 1000;
+      const pageWidthPt = vb.width * unitPt;
+      const pageHeightPt = vb.height * unitPt;
+      const pageRight = vb.x + vb.width;
+      const pageBottom = vb.y + vb.height;
+
+      const blankLeftPt = Math.max(0, (bbox.left - vb.x) * unitPt);
+      const blankRightPt = Math.max(0, (pageRight - bbox.right) * unitPt);
+      const blankTopPt = Math.max(0, (bbox.top - vb.y) * unitPt);
+      const blankBottomPt = Math.max(0, (pageBottom - bbox.bottom) * unitPt);
+
+      // 横向只保留很小的字形安全边；纵向额外保留微调走廊。
+      // 高精度基线会通过 CropTop/CropBottom 平移可见窗口，如果初始裁剪贴着字形，
+      // 任何小数微调都可能切掉 x_i、积分号或上下标的顶部/底部。
+      const cropLeftPt = Math.max(0, blankLeftPt - WORD_CROP_HORIZONTAL_SAFETY_PT);
+      const cropRightPt = Math.max(0, blankRightPt - WORD_CROP_HORIZONTAL_SAFETY_PT);
+      const cropTopPt = Math.max(0, blankTopPt - WORD_CROP_VERTICAL_RETAIN_PT);
+      const cropBottomPt = Math.max(0, blankBottomPt - WORD_CROP_VERTICAL_RETAIN_PT);
+      const retainedTopSafetyPt = Math.max(0, blankTopPt - cropTopPt);
+      const retainedBottomSafetyPt = Math.max(0, blankBottomPt - cropBottomPt);
+
+      // MathJax 数学基线是 SVG 坐标 y=0。Word 裁掉底部空白后，数学基线到
+      // 可见图片底边的距离由下面的纯 SVG 几何关系确定。
+      const baselineFromTopPt = (0 - vb.y) * unitPt;
+      const baselineDepthAfterCropPt = Math.max(
+        0,
+        pageHeightPt - cropBottomPt - baselineFromTopPt
+      );
+      const fontOffsetDownPt = mode === "inline"
+        ? getSelectedFontInlineOffsetPt(safeFontSize)
+        : 0;
+      const wordPositionDownPt = mode === "inline"
+        ? baselineDepthAfterCropPt + fontOffsetDownPt
+        : 0;
+
+      svg.setAttribute("width", fmtNumber(pageWidthPt) + "pt");
+      svg.setAttribute("height", fmtNumber(pageHeightPt) + "pt");
+      svg.setAttribute("preserveAspectRatio", "xMinYMin meet");
+      svg.setAttribute("overflow", "visible");
+
+      svg.setAttribute("data-emf-direct-page", "1");
+      svg.setAttribute("data-emf-page-width-pt", fmtNumber(pageWidthPt));
+      svg.setAttribute("data-emf-page-height-pt", fmtNumber(pageHeightPt));
+      svg.setAttribute("data-svg-crop-left-pt", fmtNumber(cropLeftPt));
+      svg.setAttribute("data-svg-crop-right-pt", fmtNumber(cropRightPt));
+      svg.setAttribute("data-svg-crop-top-pt", fmtNumber(cropTopPt));
+      svg.setAttribute("data-svg-crop-bottom-pt", fmtNumber(cropBottomPt));
+      svg.setAttribute("data-svg-retained-top-safety-pt", fmtNumber(retainedTopSafetyPt));
+      svg.setAttribute("data-svg-retained-bottom-safety-pt", fmtNumber(retainedBottomSafetyPt));
+      svg.setAttribute("data-svg-baseline-from-top-pt", fmtNumber(baselineFromTopPt));
+      svg.setAttribute("data-word-baseline-depth-after-crop-pt", fmtNumber(baselineDepthAfterCropPt));
+      svg.setAttribute("data-word-font-offset-down-pt", fmtNumber(fontOffsetDownPt));
+      svg.setAttribute("data-word-position-down-pt", fmtNumber(wordPositionDownPt));
+      svg.setAttribute("data-word-baseline-method", DIRECT_EMF_BASELINE_METHOD);
+      svg.setAttribute("data-svg-visible-left", fmtNumber(bbox.left));
+      svg.setAttribute("data-svg-visible-top", fmtNumber(bbox.top));
+      svg.setAttribute("data-svg-visible-right", fmtNumber(bbox.right));
+      svg.setAttribute("data-svg-visible-bottom", fmtNumber(bbox.bottom));
+      svg.setAttribute("data-svg-crop-horizontal-safety-pt", fmtNumber(WORD_CROP_HORIZONTAL_SAFETY_PT));
+      svg.setAttribute("data-svg-crop-vertical-glyph-safety-pt", fmtNumber(WORD_CROP_VERTICAL_GLYPH_SAFETY_PT));
+      svg.setAttribute("data-svg-crop-vertical-shift-reserve-pt", fmtNumber(WORD_CROP_VERTICAL_SHIFT_RESERVE_PT));
+    }
+
+    function makePreviewSvg(svg) {
+      const clone = svg.cloneNode(true);
+      if (clone.getAttribute("data-emf-direct-page") !== "1") return clone;
+      const vb = parseSvgViewBox(clone);
+      const fontSize = Math.max(0.01, finiteFontNumber(clone.getAttribute("data-font-size-pt"), 12));
+      const unitPt = fontSize / 1000;
+      const cropLeftPt = finiteFontNumber(clone.getAttribute("data-svg-crop-left-pt"), 0);
+      const cropRightPt = finiteFontNumber(clone.getAttribute("data-svg-crop-right-pt"), 0);
+      const cropTopPt = finiteFontNumber(clone.getAttribute("data-svg-crop-top-pt"), 0);
+      const cropBottomPt = finiteFontNumber(clone.getAttribute("data-svg-crop-bottom-pt"), 0);
+      const leftUnits = cropLeftPt / unitPt;
+      const rightUnits = cropRightPt / unitPt;
+      const topUnits = cropTopPt / unitPt;
+      const bottomUnits = cropBottomPt / unitPt;
+      const widthUnits = Math.max(1e-6, vb.width - leftUnits - rightUnits);
+      const heightUnits = Math.max(1e-6, vb.height - topUnits - bottomUnits);
+      clone.setAttribute("viewBox", [
+        vb.x + leftUnits,
+        vb.y + topUnits,
+        widthUnits,
+        heightUnits
+      ].map(fmtNumber).join(" "));
+      clone.setAttribute("width", fmtNumber(widthUnits * unitPt) + "pt");
+      clone.setAttribute("height", fmtNumber(heightUnits * unitPt) + "pt");
+      return clone;
+    }
+
+    function readWordPlacementFromSvgText(svgText) {
+      const text = String(svgText || "");
+      const read = (name) => {
+        const match = text.match(new RegExp(`${name}\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')`, "i"));
+        return match ? String(match[1] ?? match[2] ?? "") : "";
+      };
+      const number = (name) => finiteFontNumber(read(name), 0);
+      return {
+        baselineMethod: read("data-word-baseline-method") || "",
+        pageWidthPt: number("data-emf-page-width-pt"),
+        pageHeightPt: number("data-emf-page-height-pt"),
+        cropLeftPt: number("data-svg-crop-left-pt"),
+        cropRightPt: number("data-svg-crop-right-pt"),
+        cropTopPt: number("data-svg-crop-top-pt"),
+        cropBottomPt: number("data-svg-crop-bottom-pt"),
+        retainedTopSafetyPt: number("data-svg-retained-top-safety-pt"),
+        retainedBottomSafetyPt: number("data-svg-retained-bottom-safety-pt"),
+        baselineFromTopPt: number("data-svg-baseline-from-top-pt"),
+        baselineDepthAfterCropPt: number("data-word-baseline-depth-after-crop-pt"),
+        fontOffsetDownPt: number("data-word-font-offset-down-pt"),
+        wordPositionDownPt: number("data-word-position-down-pt")
+      };
+    }
+
+    function applyVisualSettingsToSvg(svg, color, fontSize, mode, mathFont, latex = "", forWord = false) {
       svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
       svg.setAttribute("version", "1.1");
       svg.setAttribute("color", color);
@@ -689,21 +1332,15 @@
       svg.setAttribute("data-formula-mode", mode);
       svg.setAttribute("data-math-font", mathFont);
       svg.setAttribute("data-math-font-label", getSelectedFontLabel());
-
       const oldStyle = svg.getAttribute("style") || "";
       svg.setAttribute("style", `${oldStyle}; color:${color}; fill:${color}; font-size:${fmtNumber(fontSize)}pt;`);
-
-      const viewBox = svg.getAttribute("viewBox");
-      if (viewBox) {
-        const parts = viewBox.trim().split(/[\s,]+/).map(Number);
-        if (parts.length === 4 && parts.every(Number.isFinite) && parts[2] > 0 && parts[3] > 0) {
-          svg.setAttribute("width", fmtNumber(parts[2] / 1000 * fontSize) + "pt");
-          svg.setAttribute("height", fmtNumber(parts[3] / 1000 * fontSize) + "pt");
-        }
-      }
+      const vb = parseSvgViewBox(svg);
+      svg.setAttribute("width", fmtNumber(vb.width / 1000 * fontSize) + "pt");
+      svg.setAttribute("height", fmtNumber(vb.height / 1000 * fontSize) + "pt");
+      if (forWord) configureDirectEmfSvg(svg, fontSize, mode);
     }
 
-    async function renderToSvgText() {
+    async function renderToSvgText(forWord = false) {
       await ensureMathJaxReady();
 
       const raw = $("tex").value;
@@ -713,7 +1350,7 @@
       const mode = $("formulaMode").value === "display" ? "display" : "inline";
       const mathFont = getSelectedFont();
 
-      $("fontSize").value = fmtNumber(fontSize);
+      setFontSizeSelectValue($("fontSize"), fontSize);
       $("svgColor").value = color;
 
       if (!tex) throw new Error("请输入 LaTeX 公式。");
@@ -724,11 +1361,11 @@
       const node = await MathJax.tex2svgPromise(texForMathJax, { display: mode === "display" });
       const svg = node.querySelector("svg").cloneNode(true);
 
-      applyVisualSettingsToSvg(svg, color, fontSize, mode, mathFont);
+      applyVisualSettingsToSvg(svg, color, fontSize, mode, mathFont, tex, forWord);
 
       const preview = $("preview");
       preview.style.color = color;
-      preview.replaceChildren(svg.cloneNode(true));
+      preview.replaceChildren(makePreviewSvg(svg));
 
       let svgText = new XMLSerializer().serializeToString(svg);
       svgText = svgText.replace(/currentColor/g, color);
@@ -742,7 +1379,7 @@
       return svgText;
     }
 
-    async function renderLatexValueToSvgText(rawLatex, requestedMode) {
+    async function renderLatexValueToSvgText(rawLatex, requestedMode, forWord = true) {
       await ensureMathJaxReady();
 
       const raw = String(rawLatex ?? "");
@@ -757,7 +1394,7 @@
       const texForMathJax = makeTexForMathJax(tex, mode);
       const node = await MathJax.tex2svgPromise(texForMathJax, { display: mode === "display" });
       const svg = node.querySelector("svg").cloneNode(true);
-      applyVisualSettingsToSvg(svg, color, fontSize, mode, mathFont);
+      applyVisualSettingsToSvg(svg, color, fontSize, mode, mathFont, tex, forWord);
 
       let svgText = new XMLSerializer().serializeToString(svg).replace(/currentColor/g, color);
       if (!svgText.startsWith("<svg")) svgText = svgText.replace(/^.*?(<svg)/s, "$1");
@@ -765,20 +1402,47 @@
       return insertMetadataIntoSvg(svgText, metadata);
     }
 
-    function formulaPayloadFromRendered(svgText, latex, mode, includeChapterNumber = false) {
+    function formulaPayloadFromRendered(
+      svgText,
+      latex,
+      mode,
+      includeChapterNumber = false,
+      chapterNumberMode = "chapter"
+    ) {
       const normalizedMode = mode === "display" ? "display" : "inline";
+      const placement = readWordPlacementFromSvgText(svgText);
       return {
         type: "latex-svg-formula",
-        version: 1,
+        version: 2,
         latex: String(latex ?? ""),
         mode: normalizedMode,
         display: normalizedMode === "display",
+        baselineMethod: placement.baselineMethod || "",
+        pageWidthPt: placement.pageWidthPt || 0,
+        pageHeightPt: placement.pageHeightPt || 0,
+        cropLeftPt: placement.cropLeftPt || 0,
+        cropRightPt: placement.cropRightPt || 0,
+        cropTopPt: placement.cropTopPt || 0,
+        cropBottomPt: placement.cropBottomPt || 0,
+        retainedTopSafetyPt: placement.retainedTopSafetyPt || 0,
+        retainedBottomSafetyPt: placement.retainedBottomSafetyPt || 0,
+        baselineFromTopPt: placement.baselineFromTopPt || 0,
+        baselineDepthAfterCropPt: placement.baselineDepthAfterCropPt || 0,
+        fontOffsetDownPt: placement.fontOffsetDownPt || 0,
+        wordPositionDownPt: normalizedMode === "inline" ? placement.wordPositionDownPt : 0,
         color: sanitizeColor($("svgColor").value),
         fontSize: sanitizeFontSize($("fontSize").value),
         mathFont: getSelectedFont(),
         mathFontLabel: getSelectedFontLabel(),
         includeChapterNumber: !!includeChapterNumber,
-        renderer: "mathjax-svg",
+        chapterNumberMode:
+          chapterNumberMode === "chapter-section"
+            ? "chapter-section"
+            : "chapter",
+        includeSectionNumber:
+          !!includeChapterNumber &&
+          chapterNumberMode === "chapter-section",
+        renderer: "mathjax-svg-direct-emf-word-picture-crop-precision-safe-v3",
         displayImageFormat: "emf",
         platform: "word-routeB",
         svgText
@@ -844,7 +1508,11 @@
         svgText,
         $("tex").value,
         mode,
-        !!($("includeChapterNumber") && $("includeChapterNumber").checked)
+        false,
+        $("includeSectionNumber") &&
+        $("includeSectionNumber").checked
+          ? "chapter-section"
+          : "chapter"
       );
     }
 
@@ -866,11 +1534,63 @@
       return data;
     }
 
+    async function apiPostNdjson(path, payload = {}, onEvent = null) {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        let detail = "";
+        try { detail = await response.text(); } catch (_) {}
+        throw new Error(detail || ("请求失败：" + response.status));
+      }
+      if (!response.body || typeof response.body.getReader !== "function") {
+        throw new Error("当前浏览器不支持流式转换进度。");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let finalResult = null;
+
+      const consumeLine = (line) => {
+        const clean = String(line || "").trim();
+        if (!clean) return;
+        let event;
+        try {
+          event = JSON.parse(clean);
+        } catch (_) {
+          return;
+        }
+        if (event.type === "error" || event.ok === false) {
+          throw new Error(event.error || event.message || "转换失败。");
+        }
+        if (event.type === "result") finalResult = event;
+        if (typeof onEvent === "function") onEvent(event);
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+          consumeLine(line);
+        }
+        if (done) break;
+      }
+      if (buffer.trim()) consumeLine(buffer);
+      if (!finalResult) throw new Error("转换接口没有返回最终结果。");
+      return finalResult;
+    }
+
     async function insertWordFormula() {
       try {
         setStatus("正在生成 SVG 并插入 Word……");
-        const svgText = await renderToSvgText();
-        setStatus("SVG 已生成，正在调用 Inkscape 转换为 EMF 并插入 Word……");
+        const svgText = await renderToSvgText(true);
+        setStatus("紧凑 SVG 已生成，正在直接转换为 EMF 并应用 Word 精确裁剪……");
         const data = await apiPost("/api/insert-word", currentFormulaPayload(svgText));
         setStatus(data.message || "已插入 Word。EMF 用于显示，公式数据已隐藏保存。 ");
       } catch (err) {
@@ -894,19 +1614,38 @@
       const includeChapterOverride = Object.prototype.hasOwnProperty.call(options, "includeChapterNumber")
         ? !!options.includeChapterNumber
         : null;
+
+      // 在任何异步渲染开始前锁定本次操作的勾选状态，避免 mini/main 同步、
+      // renderToSvgText 或状态恢复过程改变本次 payload。
+      const includeSectionRequested =
+        includeChapterOverride === true &&
+        !!($("includeSectionNumber") && $("includeSectionNumber").checked);
+
       try {
-        setStatus(includeChapterOverride ? "正在生成 SVG 并插入 Word 章节编号公式……" : "正在生成 SVG 并插入 Word 编号公式……");
+        setStatus(includeChapterOverride
+          ? (includeSectionRequested
+              ? "正在生成 SVG 并插入 Word 章.节.编号公式……"
+              : "正在生成 SVG 并插入 Word 章.编号公式……")
+          : "正在生成 SVG 并插入 Word 编号公式……");
         $("formulaMode").value = "display";
-        const svgText = await renderToSvgText();
+        const svgText = await renderToSvgText(true);
         const payload = currentFormulaPayload(svgText);
         payload.mode = "display";
         payload.display = true;
         if (includeChapterOverride !== null) {
           payload.includeChapterNumber = includeChapterOverride;
         }
+
+        // 直接使用点击瞬间锁定的布尔值，不再在异步渲染后重新读取 DOM。
+        payload.includeSectionNumber = includeSectionRequested;
+        payload.chapterNumberMode = includeSectionRequested
+          ? "chapter-section"
+          : "chapter";
         setStatus(includeChapterOverride
-          ? "SVG 已生成，正在调用 Inkscape 转换为 EMF 并插入章节编号公式……"
-          : "SVG 已生成，正在调用 Inkscape 转换为 EMF 并插入编号公式……");
+          ? (includeSectionRequested
+              ? "SVG 已生成，正在插入章.节.编号公式……"
+              : "SVG 已生成，正在插入章.编号公式……")
+          : "SVG 已生成，正在插入普通编号公式……");
         const data = await apiPost("/api/insert-numbered-word", payload);
         setStatus(data.message || "已插入 Word 编号公式。 ");
       } catch (err) {
@@ -934,22 +1673,43 @@
         const found = await apiPost("/api/find-word-conversion-targets", {});
         const matches = Array.isArray(found.matches) ? found.matches : [];
         if (!matches.length) {
-          setStatus(found.message || "未找到可转换的 LaTeX 定界符，Word 内容未修改。");
-          return;
+          setStatus(found.message || "未找到可转换的 LaTeX 定界符，准备自动尝试回写……");
+          return false;
         }
+
+        // 在批量异步渲染开始前锁定本次“含节号”设置，
+        // 防止转换过程中 mini/main 同步改变后续公式的编号模式。
+        const conversionIncludeSectionNumber =
+          !!($("includeSectionNumber") && $("includeSectionNumber").checked);
 
         const items = [];
         for (let index = 0; index < matches.length; index += 1) {
           const target = matches[index];
           const mode = target.mode === "display" ? "display" : "inline";
           setStatus(`正在渲染第 ${index + 1}/${matches.length} 个公式……`);
-          const svgText = await renderLatexValueToSvgText(target.latex, mode);
+          const svgText = await renderLatexValueToSvgText(target.latex, mode, true);
+          // 转换 ##…## 章节编号公式时，也必须同步当前“含节号”勾选状态。
+          // 之前只传了 includeChapterNumber，chapterNumberMode 使用默认值 "chapter"，
+          // 因而转换功能始终生成“章.编号”。
+          const includeChapterNumber = !!target.includeChapterNumber;
+          const includeSectionNumber =
+            includeChapterNumber && conversionIncludeSectionNumber;
+          const chapterNumberMode = includeSectionNumber
+            ? "chapter-section"
+            : "chapter";
+
           const payload = formulaPayloadFromRendered(
             svgText,
             target.latex,
             mode,
-            !!target.includeChapterNumber
+            includeChapterNumber,
+            chapterNumberMode
           );
+
+          // 显式写入，避免后续对象展开或旧配置覆盖本次勾选状态。
+          payload.includeChapterNumber = includeChapterNumber;
+          payload.includeSectionNumber = includeSectionNumber;
+          payload.chapterNumberMode = chapterNumberMode;
           items.push({
             ...payload,
             rangeStart: target.start,
@@ -960,15 +1720,41 @@
           });
         }
 
-        setStatus(`正在调用 Inkscape 生成 ${items.length} 个 EMF，并原位写入 Word……`);
-        const data = await apiPost("/api/convert-word-markers", {
+        const hasChapterNumbered = matches.some(
+          item => !!item.includeChapterNumber
+        );
+        if (hasChapterNumbered) {
+          setStatus(
+            conversionIncludeSectionNumber
+              ? `正在批量转换 EMF：0/${items.length}（章节公式使用章.节.编号）`
+              : `正在批量转换 EMF：0/${items.length}（章节公式使用章.编号）`
+          );
+        } else {
+          setStatus(`正在批量转换 EMF：0/${items.length}`);
+        }
+        const data = await apiPostNdjson("/api/convert-word-markers-stream", {
           items,
           documentIdentity: found.documentIdentity || ""
+        }, (event) => {
+          if (event.type === "progress" && event.stage === "emf") {
+            setStatus(`正在批量转换 EMF：${event.completed}/${event.total}`);
+          } else if (event.type === "progress" && event.stage === "word") {
+            setStatus(`EMF 已转换 ${event.total}/${event.total}，正在写入 Word……`);
+          }
         });
         setStatus(data.message || `已转换 ${items.length} 个公式。`);
+        return true;
       } catch (err) {
-        setStatus("转换 Word LaTeX 公式失败：" + err.message, true);
+        setStatus("转换失败，准备自动尝试回写：" + err.message);
+        return false;
       }
+    }
+
+    async function convertOrWritebackWord() {
+      const converted = await convertWordLatexMarkers();
+      if (converted) return true;
+      await writebackWordFormulas();
+      return false;
     }
 
     async function writebackWordFormulas() {
@@ -984,8 +1770,8 @@
     async function updateWordFormula() {
       try {
         setStatus("正在重新渲染选中公式……");
-        const svgText = await renderToSvgText();
-        setStatus("SVG 已生成，正在调用 Inkscape 转换为 EMF 并更新 Word……");
+        const svgText = await renderToSvgText(true);
+        setStatus("紧凑 SVG 已生成，正在直接转换为 EMF 并更新 Word 精确裁剪……");
         const data = await apiPost("/api/update-word", currentFormulaPayload(svgText));
         setStatus(data.message || "已更新 Word 选中公式。 ");
       } catch (err) {
@@ -1135,9 +1921,13 @@
 
       $("tex").value = data.latex;
       if (data.color && /^#[0-9a-fA-F]{6}$/.test(data.color)) $("svgColor").value = data.color;
-      if (data.fontSize !== undefined && data.fontSize !== null) $("fontSize").value = fmtNumber(sanitizeFontSize(data.fontSize));
+      if (data.fontSize !== undefined && data.fontSize !== null) setFontSizeSelectValue($("fontSize"), data.fontSize);
       if (data.mode) $("formulaMode").value = data.mode === "display" || /^(1|true|yes)$/i.test(data.mode) ? "display" : "inline";
-      if (data.includeChapterNumber !== undefined && $("includeChapterNumber")) $("includeChapterNumber").checked = !!data.includeChapterNumber;
+      if ($("includeSectionNumber")) {
+        $("includeSectionNumber").checked =
+          data.chapterNumberMode === "chapter-section" ||
+          data.includeSectionNumber === true;
+      }
       if (data.mathFont && getAvailableFonts().some(f => f.id === data.mathFont)) {
         $("mathFont").value = data.mathFont;
         if (data.mathFont !== window.LATEX_SVG_SELECTED_FONT) {
@@ -1207,15 +1997,57 @@
 
     function handleFontChange() {
       const newFont = getSelectedFont();
+      const configured = getAvailableFonts().find(font => font.id === newFont);
+      const calibrated =
+        configured &&
+        (
+          configured.calibrated === true ||
+          configured.calibrationStatus === "calibrated"
+        );
+
       saveState();
       if (newFont !== window.LATEX_SVG_SELECTED_FONT) {
-        setStatus("正在切换公式字体并重新加载页面……");
+        // 新字体重新执行“本地 → 联网 → 默认字体”完整链路。
+        clearFontFallbackState(newFont);
+
+        try {
+          const currentUrl = new URL(location.href);
+          currentUrl.searchParams.set("fontSource", "local");
+          currentUrl.searchParams.delete("fontFallbackReason");
+          currentUrl.searchParams.set("mathFont", newFont);
+          history.replaceState(null, "", currentUrl.href);
+        } catch (_) {}
+
+        setStatus(
+          calibrated
+            ? "正在切换公式字体并重新加载页面……"
+            : "正在切换未校准字体并重新加载页面……"
+        );
         setTimeout(() => location.reload(), 120);
       } else {
+        if (!calibrated) {
+          setStatus(
+            "提示：当前字体尚未完成 Word 基线校准，正在使用临时偏移曲线。"
+          );
+        }
         renderToSvgText().catch(() => {});
       }
     }
 
+
+    const MINI_WINDOW_WIDTH_COLLAPSED = 1100;
+    const MINI_WINDOW_WIDTH_EXPANDED = 1640;
+    const MINI_WINDOW_HEIGHT = 46;
+
+    function resizeMiniWindowFixed(collapsed) {
+      if (!isMiniMode()) return;
+      const width = collapsed
+        ? MINI_WINDOW_WIDTH_COLLAPSED
+        : MINI_WINDOW_WIDTH_EXPANDED;
+      try {
+        window.resizeTo(width, MINI_WINDOW_HEIGHT);
+      } catch (_) {}
+    }
 
     function isMiniMode() {
       return new URLSearchParams(location.search || "").get("mini") === "1";
@@ -1241,13 +2073,22 @@
         localStorage.setItem(STORAGE_KEYS.miniDrawerCollapsed, shouldCollapse ? "1" : "0");
       }
 
-      // 先更新 DOM，再让 Python 按预设宽度缩放原生窗口。
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      // DOM 更新后只执行一次固定尺寸调整，不做运行时测量。
+      await new Promise(resolve =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))
+      );
       try {
-        if (window.pywebview && window.pywebview.api && window.pywebview.api.set_drawer_collapsed) {
+        if (
+          window.pywebview &&
+          window.pywebview.api &&
+          window.pywebview.api.set_drawer_collapsed
+        ) {
           await window.pywebview.api.set_drawer_collapsed(shouldCollapse);
         }
       } catch (_) {}
+
+      // 旧接口可能仍带有旧版宽度，因此最后按当前界面固定值覆盖一次。
+      resizeMiniWindowFixed(shouldCollapse);
     }
 
     function toggleMiniDrawer() {
@@ -1262,10 +2103,17 @@
       const miniSize = $("miniFontSize");
       const miniFont = $("miniMathFont");
       const miniColor = $("miniColor");
+      const miniIncludeSectionNumber = $("miniIncludeSectionNumber");
       if (miniTex) miniTex.value = $("tex").value;
-      if (miniSize) miniSize.value = fmtNumber(sanitizeFontSize($("fontSize").value));
-      if (miniColor) miniColor.value = sanitizeColor($("svgColor").value || "#000000");
+      if (miniSize) setFontSizeSelectValue(miniSize, $("fontSize").value);
+      if (miniColor) {
+        miniColor.value = sanitizeColor($("svgColor").value || "#000000");
+        syncMiniColorPreset(miniColor.value);
+      }
       if (miniFont) miniFont.value = getSelectedFont();
+      if (miniIncludeSectionNumber && $("includeSectionNumber")) {
+        miniIncludeSectionNumber.checked = $("includeSectionNumber").checked;
+      }
       const collapsed = localStorage.getItem(STORAGE_KEYS.miniDrawerCollapsed) === "1";
       await setMiniDrawerCollapsed(collapsed, { persist: false });
     }
@@ -1288,10 +2136,17 @@
       const miniSize = $("miniFontSize");
       const miniFont = $("miniMathFont");
       const miniColor = $("miniColor");
+      const miniIncludeSectionNumber = $("miniIncludeSectionNumber");
       if (miniTex) $("tex").value = miniTex.value;
-      if (miniSize) $("fontSize").value = fmtNumber(sanitizeFontSize(miniSize.value));
-      if (miniColor) $("svgColor").value = sanitizeColor(miniColor.value || "#000000");
+      if (miniSize) setFontSizeSelectValue($("fontSize"), miniSize.value);
+      if (miniColor) {
+        $("svgColor").value = sanitizeColor(miniColor.value || "#000000");
+        syncMiniColorPreset($("svgColor").value);
+      }
       if (miniFont && getAvailableFonts().some(f => f.id === miniFont.value)) $("mathFont").value = miniFont.value;
+      if (miniIncludeSectionNumber && $("includeSectionNumber")) {
+        $("includeSectionNumber").checked = miniIncludeSectionNumber.checked;
+      }
       saveState();
     }
 
@@ -1300,10 +2155,17 @@
       const miniSize = $("miniFontSize");
       const miniFont = $("miniMathFont");
       const miniColor = $("miniColor");
+      const miniIncludeSectionNumber = $("miniIncludeSectionNumber");
       if (miniTex) miniTex.value = $("tex").value;
-      if (miniSize) miniSize.value = fmtNumber(sanitizeFontSize($("fontSize").value));
-      if (miniColor) miniColor.value = sanitizeColor($("svgColor").value || "#000000");
+      if (miniSize) setFontSizeSelectValue(miniSize, $("fontSize").value);
+      if (miniColor) {
+        miniColor.value = sanitizeColor($("svgColor").value || "#000000");
+        syncMiniColorPreset(miniColor.value);
+      }
       if (miniFont) miniFont.value = getSelectedFont();
+      if (miniIncludeSectionNumber && $("includeSectionNumber")) {
+        miniIncludeSectionNumber.checked = $("includeSectionNumber").checked;
+      }
     }
 
     async function miniInsertWordFormula(mode = "inline") {
@@ -1322,6 +2184,7 @@
         includeChapterNumber ? "正在准备章节编号公式……" : "正在准备编号公式……",
         async () => {
           syncMiniToMain();
+          saveState();
           const oldMode = $("formulaMode").value;
           $("formulaMode").value = "display";
           try {
@@ -1347,19 +2210,15 @@
       });
     }
 
-    async function miniConvertWordLatexMarkers() {
-      return runMiniOperation("正在识别 Word 中的 LaTeX 定界符……", async () => {
-        syncMiniToMain();
-        await convertWordLatexMarkers();
-        syncMainToMini();
-      });
-    }
-
-    async function miniWritebackWordFormulas() {
-      return runMiniOperation("正在回写 Word 公式的 LaTeX 编码……", async () => {
-        await writebackWordFormulas();
-        syncMainToMini();
-      });
+    async function miniConvertOrWritebackWord() {
+      return runMiniOperation(
+        "正在转换；未找到可转换内容时将自动回写……",
+        async () => {
+          syncMiniToMain();
+          await convertOrWritebackWord();
+          syncMainToMini();
+        }
+      );
     }
 
     function setupMiniDragInteractionLock() {
@@ -1461,8 +2320,7 @@
     $("insertDisplayWord").addEventListener("click", () => insertWordFormulaAsMode("display"));
     $("insertNumberedWord").addEventListener("click", insertNumberedWordFormula);
     $("readWord").addEventListener("click", readWordFormula);
-    $("convertWord").addEventListener("click", convertWordLatexMarkers);
-    $("writebackWord").addEventListener("click", writebackWordFormulas);
+    $("convertOrWritebackWord").addEventListener("click", convertOrWritebackWord);
     $("updateWord").addEventListener("click", updateWordFormula);
     $("tex").addEventListener("input", () => renderToSvgText().catch(() => {}));
     $("formulaMode").addEventListener("change", () => renderToSvgText().catch(() => {}));
@@ -1479,26 +2337,47 @@
     $("fontSize").addEventListener("input", () => renderToSvgText().catch(() => {}));
     $("fontSize").addEventListener("change", () => renderToSvgText().catch(() => {}));
     $("mathFont").addEventListener("change", handleFontChange);
-    $("includeChapterNumber").addEventListener("change", saveState);
+    $("includeSectionNumber").addEventListener("change", () => {
+      saveState();
+      syncMainToMini();
+    });
     $("miniColor").addEventListener("input", () => {
       const color = normalizeHexColorInput($("miniColor").value);
-      if (!color) return;
+      if (!color) {
+        const preset = $("miniColorPreset");
+        if (preset) {
+          preset.value = "";
+          preset.style.color = "#475569";
+        }
+        return;
+      }
       $("miniColor").value = color;
+      syncMiniColorPreset(color);
       syncMiniToMain();
       renderToSvgText().catch(() => {});
     });
     $("miniColor").addEventListener("change", () => {
-      $("miniColor").value = sanitizeColor($("miniColor").value || "#000000");
-      syncMiniToMain();
-      renderToSvgText().then(syncMainToMini).catch(() => {});
+      applyMiniColorValue($("miniColor").value || "#000000");
+    });
+    $("miniColorPreset").addEventListener("change", () => {
+      const selected = $("miniColorPreset").value;
+      if (!selected) {
+        $("miniColor").focus();
+        $("miniColor").select();
+        return;
+      }
+      applyMiniColorValue(selected);
     });
     $("miniInsertInlineWord").addEventListener("click", () => miniInsertWordFormula("inline").catch(err => setStatus("迷你窗口插入行内公式失败：" + err.message, true)));
     $("miniInsertDisplayWord").addEventListener("click", () => miniInsertWordFormula("display").catch(err => setStatus("迷你窗口插入行间公式失败：" + err.message, true)));
     $("miniInsertNumberedWord").addEventListener("click", () => miniInsertNumberedWordFormula(false).catch(err => setStatus("迷你窗口插入编号公式失败：" + err.message, true)));
     $("miniInsertChapterNumberedWord").addEventListener("click", () => miniInsertNumberedWordFormula(true).catch(err => setStatus("迷你窗口插入章节编号公式失败：" + err.message, true)));
     $("miniReadWord").addEventListener("click", () => miniReadWordFormula().catch(err => setStatus("迷你窗口读取公式失败：" + err.message, true)));
-    $("miniConvertWord").addEventListener("click", () => miniConvertWordLatexMarkers().catch(err => setStatus("迷你窗口转换公式失败：" + err.message, true)));
-    $("miniWritebackWord").addEventListener("click", () => miniWritebackWordFormulas().catch(err => setStatus("迷你窗口回写公式失败：" + err.message, true)));
+    $("miniConvertOrWritebackWord").addEventListener("click", () =>
+      miniConvertOrWritebackWord().catch(err =>
+        setStatus("迷你窗口转换/回写失败：" + err.message, true)
+      )
+    );
     $("miniDrawerToggle").addEventListener("click", () => toggleMiniDrawer().catch(() => {}));
     $("miniClose").addEventListener("click", closeMiniWindow);
     $("miniTex").addEventListener("input", () => { syncMiniToMain(); renderToSvgText().catch(() => {}); });
@@ -1513,6 +2392,7 @@
       syncMiniToMain();
       handleFontChange();
     });
+    $("miniIncludeSectionNumber").addEventListener("change", syncMiniToMain);
     window.addEventListener("paste", handlePaste);
 
     $("pasteBox").addEventListener("dragover", (event) => { event.preventDefault(); $("pasteBox").classList.add("dragover"); });
@@ -1532,7 +2412,16 @@
         await ensureMathJaxReady();
         syncMainToMini();
 
-        setStatus("本地 MathJax 初始化完成。当前字体：" + getSelectedFontLabel() + "。可开始操作。");
+        const fontSourceLabel =
+          window.LATEX_SVG_FONT_SOURCE === "local"
+            ? "本地备用字体目录"
+            : "官方 CDN";
+        clearCurrentFontFallbackState();
+        setStatus(
+          "MathJax 初始化完成。当前字体：" +
+          getSelectedFontLabel() +
+          "；字体来源：" + fontSourceLabel + "。可开始操作。"
+        );
         if (isMiniMode()) {
           // 迷你窗口启动阶段不再执行任何测试公式渲染。
           // 真正点击插入、转换或修改输入框时，再按需调用 tex2svgPromise。
@@ -1547,9 +2436,13 @@
         }
       } catch (err) {
         const initError = err && err.message ? err.message : String(err || "未知错误");
-        setStatus("初始化失败：" + initError, true);
+        const sourceLabel =
+          window.LATEX_SVG_FONT_SOURCE === "local"
+            ? "本地备用字体"
+            : "在线字体";
+        setStatus(sourceLabel + "初始化失败：" + initError, true);
         if (isMiniMode()) {
-          setMiniLoadingMessage("初始化失败：" + initError, true);
+          setMiniLoadingMessage(sourceLabel + "初始化失败：" + initError, true);
         }
       }
     });

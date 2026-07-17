@@ -26,6 +26,7 @@ FONT_LABELS = {
 
 
 def load_manifest_fonts() -> list[dict]:
+    """读取字体清单。兼容旧的数组格式和新版 {"fonts": [...]} 格式。"""
     manifest = ROOT / "fonts-manifest.json"
     if not manifest.exists():
         return []
@@ -33,7 +34,11 @@ def load_manifest_fonts() -> list[dict]:
         data = json.loads(manifest.read_text(encoding="utf-8"))
     except Exception:
         return []
-    return data if isinstance(data, list) else []
+    if isinstance(data, dict):
+        data = data.get("fonts", [])
+    if not isinstance(data, list):
+        return []
+    return [dict(item) for item in data if isinstance(item, dict)]
 
 
 def scan_vendor_fonts() -> list[dict]:
@@ -64,26 +69,66 @@ def scan_vendor_fonts() -> list[dict]:
             "label": label,
             "path": f"./vendor/fonts/{path.name}",
             "builtin": False,
+            "inlineBaselineOffsetPt": 0.0,
+            "inlineBaselineOffsetCurvePt": {},
         })
     return fonts
 
 
+def _builtin_font() -> dict:
+    return {
+        "id": "mathjax-newcm",
+        "label": "MathJax New Computer Modern（内置）",
+        "builtin": True,
+        "inlineBaselineOffsetPt": 0.0,
+        "inlineBaselineOffsetCurvePt": {},
+    }
+
+
 def available_fonts() -> list[dict]:
-    seen = set()
-    result: list[dict] = []
-    for font in load_manifest_fonts() + scan_vendor_fonts():
-        font_id = font.get("id")
-        if not font_id or font_id in seen:
+    """
+    自动扫描字体，再用 fonts-manifest.json 按 id 覆盖设置。
+
+    清单条目只写 id 和偏移量也可以；自动扫描得到的 path/builtin 信息会保留。
+    enabled=false 可隐藏某个自动扫描字体。
+    """
+    automatic = [_builtin_font()] + scan_vendor_fonts()
+    by_id: dict[str, dict] = {}
+    auto_order: list[str] = []
+    for font in automatic:
+        font_id = str(font.get("id") or "").strip()
+        if not font_id or font_id in by_id:
             continue
-        seen.add(font_id)
-        result.append(font)
-    if "mathjax-newcm" not in seen:
-        result.insert(0, {
-            "id": "mathjax-newcm",
-            "label": "MathJax New Computer Modern（内置）",
-            "builtin": True,
-        })
-    return result
+        by_id[font_id] = dict(font)
+        auto_order.append(font_id)
+
+    manifest_order: list[str] = []
+    disabled: set[str] = set()
+    for override in load_manifest_fonts():
+        font_id = str(override.get("id") or "").strip()
+        if not font_id:
+            continue
+        if override.get("enabled") is False:
+            disabled.add(font_id)
+            continue
+        base = dict(by_id.get(font_id, {}))
+        base.update(override)
+        base["id"] = font_id
+        base.setdefault("label", FONT_LABELS.get(font_id, font_id))
+        base.setdefault("inlineBaselineOffsetPt", 0.0)
+        base.setdefault("inlineBaselineOffsetCurvePt", {})
+        by_id[font_id] = base
+        if font_id not in manifest_order:
+            manifest_order.append(font_id)
+
+    result: list[dict] = []
+    for font_id in manifest_order + auto_order:
+        if font_id in disabled or font_id not in by_id:
+            continue
+        if any(item.get("id") == font_id for item in result):
+            continue
+        result.append(by_id[font_id])
+    return result or [_builtin_font()]
 
 
 def _json_response(handler: http.server.BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
@@ -141,6 +186,45 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 raise ValueError("请求体必须是 JSON 对象。")
         except Exception as exc:
             _json_response(self, 400, {"ok": False, "error": f"JSON 解析失败：{exc}"})
+            return
+
+        if path == "/api/convert-word-markers-stream":
+            from formula_word import convert_word_markers
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+
+            stream_available = True
+
+            def emit(event: dict[str, Any]) -> None:
+                nonlocal stream_available
+                if not stream_available:
+                    return
+                try:
+                    line = (json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+                    self.wfile.write(line)
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    # 用户关闭页面时仍继续完成 Word 转换，只停止发送进度。
+                    stream_available = False
+
+            def report_progress(stage: str, completed: int, total: int) -> None:
+                emit({
+                    "type": "progress",
+                    "ok": True,
+                    "stage": stage,
+                    "completed": int(completed),
+                    "total": int(total),
+                })
+
+            try:
+                result = convert_word_markers(body, progress_callback=report_progress)
+                emit({"type": "result", **result})
+            except Exception as exc:
+                emit({"type": "error", "ok": False, "error": str(exc)})
             return
 
         try:
